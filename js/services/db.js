@@ -202,6 +202,56 @@ export async function updatePeriodoEmpleado(periodoId, empleadoId, patch) {
   return rupdate(`periodos/${periodoId}/empleados/${empleadoId}`, patch);
 }
 
+// === Escenarios de proyección de nómina ===
+//
+// Cada escenario es una "plantilla hipotética" de empleados con sus sueldos
+// y deducciones estimadas. No publica al buzón ni mueve dinero — es pura
+// planeación para ver el costo futuro de la nómina al armar plantilla.
+//
+// Path: /shared/indirectos/escenarios/{escenarioId}
+//   meta: { nombre, descripcion?, factorPatronal (default 1.35),
+//           createdAt, updatedAt, createdBy }
+//   empleados: { [rowId]: {
+//     nombre, tipo, sueldoBase,
+//     sourceEmpleadoId?,    # si vino del catálogo real
+//     bonosEstimados?, deduccionesEstimadas?: {isr,imss,infonavit,prestamos},
+//     notas?
+//   }}
+
+export async function listEscenarios() {
+  return (await rread('escenarios')) || {};
+}
+export async function getEscenario(escenarioId) {
+  return await rread(`escenarios/${escenarioId}`);
+}
+export async function createEscenario(data) {
+  return rpush('escenarios', {
+    meta: {
+      nombre: data.nombre || 'Escenario sin nombre',
+      descripcion: data.descripcion || null,
+      factorPatronal: data.factorPatronal ?? 1.35,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      createdBy: data.createdBy || null
+    },
+    empleados: data.empleados || {}
+  });
+}
+export async function updateEscenarioMeta(escenarioId, patch) {
+  return rupdate(`escenarios/${escenarioId}/meta`, { ...patch, updatedAt: Date.now() });
+}
+export async function removeEscenario(escenarioId) {
+  return rremove(`escenarios/${escenarioId}`);
+}
+export async function setEscenarioEmpleado(escenarioId, rowId, data) {
+  await rset(`escenarios/${escenarioId}/empleados/${rowId}`, data);
+  await rupdate(`escenarios/${escenarioId}/meta`, { updatedAt: Date.now() });
+}
+export async function removeEscenarioEmpleado(escenarioId, rowId) {
+  await rremove(`escenarios/${escenarioId}/empleados/${rowId}`);
+  await rupdate(`escenarios/${escenarioId}/meta`, { updatedAt: Date.now() });
+}
+
 // === Gastos indirectos sueltos ===
 
 export async function listGastos() {

@@ -11,6 +11,7 @@ export function renderHome() {
 
   const cards = [
     card('👷', 'Empleados', 'Alta y catálogo del personal. Obras asignadas y peso de prorrateo.', '/empleados'),
+    card('📊', 'Proyección', 'Arma plantillas hipotéticas y proyecta el costo semanal, quincenal, mensual y anual.', '/proyeccion'),
     card('📅', 'Períodos de nómina', '4 carriles: operativo (semanal) + 3 quincenales. Captura días, deducciones, neto.', '/periodos'),
     card('💸', 'Gastos indirectos', 'Captura suelta: oficina, gasolina, etc. Atribución a obra única, prorrateo, o empresa.', '/gastos'),
     isAdmin && card('🏷️', 'Categorías', 'Catálogo editable de categorías de gasto.', '/categorias', 'Admin'),

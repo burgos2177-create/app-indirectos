@@ -6,6 +6,8 @@ import { renderHome } from './views/home.js';
 import { renderAdmin } from './views/admin.js';
 import { renderEmpleados } from './views/empleados.js';
 import { renderEmpleadoEditor } from './views/empleado.js';
+import { renderProyeccionList } from './views/proyeccion.js';
+import { renderEscenarioEditor } from './views/escenario.js';
 import {
   renderPeriodosStub, renderPeriodoStub,
   renderGastosStub, renderCategoriasStub, renderConfiguracionStub
@@ -16,6 +18,8 @@ route('/',                       () => renderHome());
 route('/admin',                  () => renderAdmin());
 route('/empleados',              (ctx) => renderEmpleados(ctx));
 route('/empleados/:id',          (ctx) => renderEmpleadoEditor(ctx));
+route('/proyeccion',             () => renderProyeccionList());
+route('/proyeccion/:id',         (ctx) => renderEscenarioEditor(ctx));
 route('/periodos',               () => renderPeriodosStub());
 route('/periodos/:id',           ({ params }) => renderPeriodoStub(params));
 route('/gastos',                 () => renderGastosStub());
