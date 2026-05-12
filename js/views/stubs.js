@@ -16,24 +16,6 @@ function stub(crumbs, title, descripcion, siguientePaso) {
   ]));
 }
 
-export function renderEmpleadosStub() {
-  stub(
-    [{ label: 'Inicio', to: '/' }, { label: 'Empleados' }],
-    'Empleados',
-    'Catálogo del personal de la empresa. Cada empleado tiene tipo (operativo/técnico campo/técnico oficina/directivo), sueldo base y obras asignadas con peso de prorrateo (suma 100%).',
-    'Pendiente: CRUD de empleados, selector multi-obra con pesos, validación de suma 100%.'
-  );
-}
-
-export function renderEmpleadoStub(params) {
-  stub(
-    [{ label: 'Inicio', to: '/' }, { label: 'Empleados', to: '/empleados' }, { label: params?.id?.slice(0, 8) || 'Detalle' }],
-    'Detalle de empleado',
-    'Edición de datos: nombre, RFC, CURP, NSS, tipo, sueldo base. Asignación de obras con pesos. Histórico de deducciones para prefill.',
-    'Pendiente: form de edición, asignación multi-obra con pesos, baja lógica.'
-  );
-}
-
 export function renderPeriodosStub() {
   stub(
     [{ label: 'Inicio', to: '/' }, { label: 'Períodos' }],

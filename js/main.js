@@ -4,8 +4,9 @@ import { route, startRouter, navigate } from './state/router.js';
 import { renderLogin } from './views/login.js';
 import { renderHome } from './views/home.js';
 import { renderAdmin } from './views/admin.js';
+import { renderEmpleados } from './views/empleados.js';
+import { renderEmpleadoEditor } from './views/empleado.js';
 import {
-  renderEmpleadosStub, renderEmpleadoStub,
   renderPeriodosStub, renderPeriodoStub,
   renderGastosStub, renderCategoriasStub, renderConfiguracionStub
 } from './views/stubs.js';
@@ -13,8 +14,8 @@ import { h, mount } from './util/dom.js';
 
 route('/',                       () => renderHome());
 route('/admin',                  () => renderAdmin());
-route('/empleados',              () => renderEmpleadosStub());
-route('/empleados/:id',          ({ params }) => renderEmpleadoStub(params));
+route('/empleados',              (ctx) => renderEmpleados(ctx));
+route('/empleados/:id',          (ctx) => renderEmpleadoEditor(ctx));
 route('/periodos',               () => renderPeriodosStub());
 route('/periodos/:id',           ({ params }) => renderPeriodoStub(params));
 route('/gastos',                 () => renderGastosStub());

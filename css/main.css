@@ -177,3 +177,33 @@ input[disabled], select[disabled], textarea[disabled] { opacity: .55; cursor: no
 .home-card h3 { margin: 0; font-size: 15px; color: var(--text-0); text-transform: none; letter-spacing: 0; }
 .home-card p { margin: 0; font-size: 12px; color: var(--text-1); line-height: 1.45; }
 .home-card .badge { align-self: flex-start; margin-top: 4px; font-size: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .3px; }
+
+/* ========== chips de filtro ========== */
+.chips-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 16px;
+  background: var(--bg-2); color: var(--text-1); border: 1px solid var(--border);
+  cursor: pointer; font-size: 12px; transition: all .15s;
+}
+.chip:hover { background: var(--bg-3); }
+.chip.active { background: var(--accent); color: #1a0f04; border-color: var(--accent); font-weight: 600; }
+.chip-count { padding: 1px 6px; border-radius: 10px; background: rgba(0,0,0,.18); font-size: 10px; }
+.chip:not(.active) .chip-count { background: var(--bg-3); color: var(--text-2); }
+
+/* ========== editor de pesos por obra ========== */
+.pesos-grid { display: grid; gap: 6px; }
+.peso-row {
+  display: grid; grid-template-columns: 22px 1fr auto;
+  align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 6px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  cursor: pointer; transition: border-color .15s;
+}
+.peso-row:hover { border-color: var(--border-strong); }
+.peso-row input[type="checkbox"] { margin: 0; }
+.peso-info { min-width: 0; }
+.peso-nombre { font-size: 13px; color: var(--text-0); }
+.peso-meta { font-size: 11px; }
+.peso-input-wrap { display: flex; align-items: center; gap: 4px; }
+.peso-input-wrap input { text-align: right; }
