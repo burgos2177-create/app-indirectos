@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- Gradiente de fondo de la suite SOGRUB -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b212d"/>
+      <stop offset="1" stop-color="#0d1015"/>
+    </linearGradient>
+    <!-- Brillo sutil del glifo (ambar de indirectos) -->
+    <linearGradient id="glyph" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6b368"/>
+      <stop offset="1" stop-color="#f0a04b"/>
+    </linearGradient>
+    <!-- Rejilla blueprint tenue -->
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#f0a04b" stroke-opacity="0.07" stroke-width="2"/>
+    </pattern>
+    <!-- Squircle de recorte -->
+    <clipPath id="squircle">
+      <rect x="0" y="0" width="1024" height="1024" rx="232" ry="232"/>
+    </clipPath>
+  </defs>
+
+  <!-- Fondo squircle + rejilla -->
+  <g clip-path="url(#squircle)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#grid)"/>
+    <!-- viñeta radial sutil para dar profundidad -->
+    <radialGradient id="vig" cx="0.5" cy="0.42" r="0.75">
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.28"/>
+    </radialGradient>
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#vig)"/>
+  </g>
+
+  <!-- ====== GLIFO: billete de nómina con $ ====== -->
+  <g>
+    <!-- cuerpo del billete -->
+    <rect x="188" y="356" width="648" height="312" rx="40" fill="url(#glyph)"/>
+
+    <!-- marco interior grabado -->
+    <rect x="224" y="392" width="576" height="240" rx="22"
+          fill="none" stroke="#11161f" stroke-opacity="0.85" stroke-width="12"/>
+
+    <!-- esquinas grabadas (textura tipo denominación) -->
+    <circle cx="278" cy="446" r="15" fill="#11161f" fill-opacity="0.85"/>
+    <circle cx="746" cy="446" r="15" fill="#11161f" fill-opacity="0.85"/>
+    <circle cx="278" cy="578" r="15" fill="#11161f" fill-opacity="0.85"/>
+    <circle cx="746" cy="578" r="15" fill="#11161f" fill-opacity="0.85"/>
+
+    <!-- líneas grabadas de "valor" a los costados del medallón -->
+    <rect x="262" y="496" width="120" height="14" rx="7" fill="#11161f" fill-opacity="0.85"/>
+    <rect x="262" y="522" width="86"  height="14" rx="7" fill="#11161f" fill-opacity="0.85"/>
+    <rect x="642" y="496" width="120" height="14" rx="7" fill="#11161f" fill-opacity="0.85"/>
+    <rect x="676" y="522" width="86"  height="14" rx="7" fill="#11161f" fill-opacity="0.85"/>
+
+    <!-- medallón central grabado -->
+    <circle cx="512" cy="512" r="100" fill="#0d1015"/>
+    <circle cx="512" cy="512" r="100" fill="none" stroke="#f0a04b" stroke-opacity="0.35" stroke-width="4"/>
+
+    <!-- símbolo $ en ambar -->
+    <path d="M512 426 V598" fill="none" stroke="url(#glyph)" stroke-width="22" stroke-linecap="round"/>
+    <path d="M556 466
+             C556 446 534 438 512 438
+             C486 438 466 450 466 474
+             C466 498 490 506 512 512
+             C534 518 558 526 558 550
+             C558 574 538 586 512 586
+             C490 586 468 578 468 558"
+          fill="none" stroke="url(#glyph)" stroke-width="26"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
