@@ -7,7 +7,7 @@ import {
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
 import { money, num2, dateMx, tipoPersonalLabel, periodicidadDeTipo, uid as randId } from '../util/format.js';
-import { TIPOS_DOCUMENTO, subirDocumento, DRIVE_CONFIG, esUrlValida } from '../services/documentos.js';
+import { TIPOS_DOCUMENTO, esUrlValida } from '../services/documentos.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
 
@@ -196,8 +196,7 @@ export async function renderEmpleadoEditor({ params }) {
   async function agregarDocumentoDialog() {
     const tipo = h('select', {}, TIPOS_DOCUMENTO.map(t => h('option', { value: t.id }, t.label)));
     const nombre = h('input', { placeholder: 'Nombre / descripción del archivo' });
-    const url = h('input', { placeholder: 'https://… (enlace en el Drive)' });
-    const file = h('input', { type: 'file' });
+    const url = h('input', { placeholder: 'https://… (enlace del archivo en Drive)' });
     await modal({
       title: 'Agregar documento',
       body: h('div', {}, [
@@ -205,32 +204,18 @@ export async function renderEmpleadoEditor({ params }) {
           h('div', { class: 'field' }, [h('label', {}, 'Tipo'), tipo]),
           h('div', { class: 'field' }, [h('label', {}, 'Nombre'), nombre])
         ]),
-        h('div', { class: 'field', style: { marginTop: '10px' } }, [h('label', {}, 'Enlace (Drive)'), url]),
         h('div', { class: 'field', style: { marginTop: '10px' } }, [
-          h('label', {}, 'o subir archivo'),
-          file,
+          h('label', {}, 'Enlace del archivo (Google Drive)'),
+          url,
           h('span', { class: 'muted', style: { fontSize: '11px' } },
-            DRIVE_CONFIG.configurado
-              ? 'Se subirá al Drive de documentos de la suite.'
-              : 'La subida directa al Drive se conectará pronto. Por ahora sube el archivo al Drive y pega aquí su enlace.')
+            'Sube el archivo a la carpeta de Drive de documentos del trabajador y pega aquí su enlace (Compartir → Copiar vínculo).')
         ])
       ]),
       confirmLabel: 'Agregar',
       onConfirm: async () => {
-        let finalUrl = url.value.trim();
-        let finalNombre = nombre.value.trim();
-        const f = file.files && file.files[0];
-        if (f) {
-          try {
-            const r = await subirDocumento(f, { empleadoId: isNuevo ? null : params.id, tipo: tipo.value });
-            finalUrl = r.url || finalUrl;
-            finalNombre = finalNombre || r.nombre || f.name;
-          } catch (err) {
-            toast(err.message, 'warn');
-            if (!finalUrl) return false;
-          }
-        }
-        if (!finalUrl) { toast('Pega el enlace del archivo o sube uno.', 'warn'); return false; }
+        const finalUrl = url.value.trim();
+        const finalNombre = nombre.value.trim();
+        if (!finalUrl) { toast('Pega el enlace del archivo.', 'warn'); return false; }
         if (!esUrlValida(finalUrl)) { toast('El enlace debe empezar con http:// o https://', 'warn'); return false; }
         draft.documentos[randId()] = {
           tipo: tipo.value,
