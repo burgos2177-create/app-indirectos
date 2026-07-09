@@ -6,7 +6,8 @@ import {
   listObrasLegacy
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
-import { money, num2, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
+import { money, num2, dateMx, tipoPersonalLabel, periodicidadDeTipo, uid as randId } from '../util/format.js';
+import { TIPOS_DOCUMENTO, subirDocumento, DRIVE_CONFIG, esUrlValida } from '../services/documentos.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
 
@@ -39,6 +40,7 @@ export async function renderEmpleadoEditor({ params }) {
   const draft = JSON.parse(JSON.stringify(empleado));
   if (!draft.obrasAsignadas) draft.obrasAsignadas = {};
   if (!draft.ultimasDeducciones) draft.ultimasDeducciones = { isr: 0, imss: 0, infonavit: 0, prestamos: 0 };
+  if (!draft.documentos) draft.documentos = {};
 
   // === Refs vivas a inputs y previsualizaciones ===
   const refs = {};
@@ -62,6 +64,14 @@ export async function renderEmpleadoEditor({ params }) {
     value: draft.sueldoBase || 0, placeholder: '0.00'
   });
   refs.notas = h('textarea', { rows: 3, placeholder: 'Notas internas (opcional)' }, draft.notas || '');
+
+  // Puesto y datos de contacto.
+  refs.puesto = h('input', { value: draft.puesto || '', placeholder: 'Ej. Albañil, Residente, Contador' });
+  refs.telefono = h('input', { type: 'tel', value: draft.telefono || '', placeholder: '55 1234 5678' });
+  refs.email = h('input', { type: 'email', value: draft.email || '', placeholder: 'correo@ejemplo.com' });
+  refs.direccion = h('input', { value: draft.direccion || '', placeholder: 'Calle, número, colonia, ciudad, CP' });
+  refs.emgNombre = h('input', { value: draft.contactoEmergencia?.nombre || '', placeholder: 'Nombre del contacto' });
+  refs.emgTelefono = h('input', { type: 'tel', value: draft.contactoEmergencia?.telefono || '', placeholder: '55 1234 5678' });
 
   // === Sección obras asignadas con pesos ===
   const obrasIds = Object.keys(obras || {});
@@ -157,6 +167,85 @@ export async function renderEmpleadoEditor({ params }) {
   refs.infonavit = numInput(draft.ultimasDeducciones.infonavit || 0);
   refs.prestamos = numInput(draft.ultimasDeducciones.prestamos || 0);
 
+  // === Documentos del trabajador (Drive de la suite) ===
+  const docsContainer = h('div', {});
+  function renderDocs() {
+    docsContainer.innerHTML = '';
+    const ids = Object.keys(draft.documentos || {});
+    if (ids.length === 0) {
+      docsContainer.appendChild(h('div', { class: 'muted', style: { fontSize: '12px' } }, 'Sin documentos aún.'));
+      return;
+    }
+    ids.forEach(id => docsContainer.appendChild(docRow(id, draft.documentos[id])));
+  }
+  function docRow(id, d) {
+    const tipoLabel = TIPOS_DOCUMENTO.find(t => t.id === d.tipo)?.label || d.tipo || 'Documento';
+    return h('div', { class: 'doc-row' }, [
+      h('div', { class: 'doc-info' }, [
+        h('div', { class: 'row', style: { gap: '8px' } }, [
+          h('span', { class: 'tag' }, tipoLabel),
+          d.url
+            ? h('a', { href: d.url, target: '_blank', rel: 'noopener' }, d.nombre || 'Abrir documento')
+            : h('span', {}, d.nombre || '(documento)')
+        ]),
+        h('div', { class: 'muted', style: { fontSize: '11px', marginTop: '2px' } }, d.fecha ? dateMx(d.fecha) : '')
+      ]),
+      h('button', { class: 'btn sm ghost danger', onClick: () => { delete draft.documentos[id]; renderDocs(); } }, '✕')
+    ]);
+  }
+  async function agregarDocumentoDialog() {
+    const tipo = h('select', {}, TIPOS_DOCUMENTO.map(t => h('option', { value: t.id }, t.label)));
+    const nombre = h('input', { placeholder: 'Nombre / descripción del archivo' });
+    const url = h('input', { placeholder: 'https://… (enlace en el Drive)' });
+    const file = h('input', { type: 'file' });
+    await modal({
+      title: 'Agregar documento',
+      body: h('div', {}, [
+        h('div', { class: 'grid-2' }, [
+          h('div', { class: 'field' }, [h('label', {}, 'Tipo'), tipo]),
+          h('div', { class: 'field' }, [h('label', {}, 'Nombre'), nombre])
+        ]),
+        h('div', { class: 'field', style: { marginTop: '10px' } }, [h('label', {}, 'Enlace (Drive)'), url]),
+        h('div', { class: 'field', style: { marginTop: '10px' } }, [
+          h('label', {}, 'o subir archivo'),
+          file,
+          h('span', { class: 'muted', style: { fontSize: '11px' } },
+            DRIVE_CONFIG.configurado
+              ? 'Se subirá al Drive de documentos de la suite.'
+              : 'La subida directa al Drive se conectará pronto. Por ahora sube el archivo al Drive y pega aquí su enlace.')
+        ])
+      ]),
+      confirmLabel: 'Agregar',
+      onConfirm: async () => {
+        let finalUrl = url.value.trim();
+        let finalNombre = nombre.value.trim();
+        const f = file.files && file.files[0];
+        if (f) {
+          try {
+            const r = await subirDocumento(f, { empleadoId: isNuevo ? null : params.id, tipo: tipo.value });
+            finalUrl = r.url || finalUrl;
+            finalNombre = finalNombre || r.nombre || f.name;
+          } catch (err) {
+            toast(err.message, 'warn');
+            if (!finalUrl) return false;
+          }
+        }
+        if (!finalUrl) { toast('Pega el enlace del archivo o sube uno.', 'warn'); return false; }
+        if (!esUrlValida(finalUrl)) { toast('El enlace debe empezar con http:// o https://', 'warn'); return false; }
+        draft.documentos[randId()] = {
+          tipo: tipo.value,
+          nombre: finalNombre || 'Documento',
+          url: finalUrl,
+          fecha: Date.now(),
+          subidoPor: state.user?.uid || null
+        };
+        renderDocs();
+        return true;
+      }
+    });
+  }
+  renderDocs();
+
   // === Acciones ===
   const guardarBtn = h('button', { class: 'btn primary', onClick: guardar }, 'Guardar');
   const eliminarBtn = h('button', {
@@ -182,13 +271,23 @@ export async function renderEmpleadoEditor({ params }) {
       }
     }
 
+    const emgNombre = refs.emgNombre.value.trim();
+    const emgTelefono = refs.emgTelefono.value.trim();
+
     const data = {
       nombre,
+      puesto: refs.puesto.value.trim() || null,
       rfc: refs.rfc.value.trim() || null,
       curp: refs.curp.value.trim() || null,
       nss: refs.nss.value.trim() || null,
       tipo: refs.tipo.value,
       sueldoBase,
+      telefono: refs.telefono.value.trim() || null,
+      email: refs.email.value.trim() || null,
+      direccion: refs.direccion.value.trim() || null,
+      contactoEmergencia: (emgNombre || emgTelefono)
+        ? { nombre: emgNombre || null, telefono: emgTelefono || null }
+        : null,
       obrasAsignadas: ids.length === 0 ? null : draft.obrasAsignadas,
       ultimasDeducciones: {
         isr: Number(refs.isr.value) || 0,
@@ -196,6 +295,7 @@ export async function renderEmpleadoEditor({ params }) {
         infonavit: Number(refs.infonavit.value) || 0,
         prestamos: Number(refs.prestamos.value) || 0
       },
+      documentos: Object.keys(draft.documentos || {}).length ? draft.documentos : null,
       notas: refs.notas.value.trim() || null,
       activo: draft.activo !== false
     };
@@ -255,9 +355,16 @@ export async function renderEmpleadoEditor({ params }) {
       h('h3', {}, 'Datos generales'),
       h('div', { class: 'grid-2' }, [
         h('div', { class: 'field' }, [h('label', {}, 'Nombre *'), refs.nombre]),
+        h('div', { class: 'field' }, [h('label', {}, 'Puesto'), refs.puesto])
+      ]),
+      h('div', { class: 'grid-2', style: { marginTop: '10px' } }, [
         h('div', { class: 'field' }, [
           h('label', {}, ['Tipo *  ', refs.periodicidadLabel]),
           refs.tipo
+        ]),
+        h('div', { class: 'field' }, [
+          h('label', {}, `Sueldo base (${periodicidadDeTipo(draft.tipo) === 'semanal' ? 'por semana' : 'por quincena'})`),
+          refs.sueldoBase
         ])
       ]),
       h('div', { class: 'grid-3', style: { marginTop: '10px' } }, [
@@ -265,13 +372,34 @@ export async function renderEmpleadoEditor({ params }) {
         h('div', { class: 'field' }, [h('label', {}, 'CURP'), refs.curp]),
         h('div', { class: 'field' }, [h('label', {}, 'NSS'), refs.nss])
       ]),
-      h('div', { class: 'grid-2', style: { marginTop: '10px' } }, [
-        h('div', { class: 'field' }, [
-          h('label', {}, `Sueldo base (${periodicidadDeTipo(draft.tipo) === 'semanal' ? 'por semana' : 'por quincena'})`),
-          refs.sueldoBase
-        ]),
-        h('div', { class: 'field' }, [h('label', {}, 'Notas internas'), refs.notas])
+      h('div', { class: 'field', style: { marginTop: '10px' } }, [h('label', {}, 'Notas internas'), refs.notas])
+    ]),
+
+    h('div', { class: 'card' }, [
+      h('h3', {}, 'Contacto'),
+      h('div', { class: 'grid-2' }, [
+        h('div', { class: 'field' }, [h('label', {}, 'Teléfono'), refs.telefono]),
+        h('div', { class: 'field' }, [h('label', {}, 'Email'), refs.email])
+      ]),
+      h('div', { class: 'field', style: { marginTop: '10px' } }, [h('label', {}, 'Dirección'), refs.direccion]),
+      h('div', { style: { marginTop: '12px' } }, [
+        h('label', { class: 'muted', style: { fontSize: '12px' } }, 'Contacto de emergencia'),
+        h('div', { class: 'grid-2', style: { marginTop: '6px' } }, [
+          h('div', { class: 'field' }, [h('label', {}, 'Nombre'), refs.emgNombre]),
+          h('div', { class: 'field' }, [h('label', {}, 'Teléfono'), refs.emgTelefono])
+        ])
       ])
+    ]),
+
+    h('div', { class: 'card' }, [
+      h('div', { class: 'row' }, [
+        h('h3', { style: { margin: 0 } }, 'Documentos del trabajador'),
+        h('div', { style: { flex: 1 } }),
+        h('button', { class: 'btn sm', onClick: agregarDocumentoDialog }, '+ Agregar documento')
+      ]),
+      h('p', { class: 'muted', style: { fontSize: '12px', margin: '10px 0' } },
+        'Contrato laboral, INE, CURP, RFC, comprobante de domicilio, etc. Se resguardan en el Drive de documentos de la suite; aquí registras el enlace de cada archivo.'),
+      docsContainer
     ]),
 
     h('div', { class: 'card' }, [
@@ -313,10 +441,16 @@ export async function renderEmpleadoEditor({ params }) {
 function emptyEmpleado() {
   return {
     nombre: '',
+    puesto: '',
     tipo: 'operativo',
     sueldoBase: 0,
+    telefono: '',
+    email: '',
+    direccion: '',
+    contactoEmergencia: null,
     obrasAsignadas: {},
     ultimasDeducciones: { isr: 0, imss: 0, infonavit: 0, prestamos: 0 },
+    documentos: {},
     activo: true,
     fechaAlta: Date.now()
   };

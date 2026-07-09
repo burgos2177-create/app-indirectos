@@ -290,6 +290,16 @@ input[disabled], select[disabled], textarea[disabled] { opacity: .55; cursor: no
 .tbl td.neto { font-family: var(--mono); font-weight: 600; color: var(--accent); text-align: right; }
 .tbl thead th.sep-l, .tbl td.sep-l { border-left: 1px solid var(--border); }
 
+/* ========== documentos del trabajador ========== */
+.doc-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 12px; border-radius: 6px;
+  background: var(--bg-2); border: 1px solid var(--border);
+}
+.doc-row + .doc-row { margin-top: 6px; }
+.doc-row .doc-info { min-width: 0; }
+.doc-row .doc-info a { word-break: break-all; }
+
 /* ========== banner de solo lectura (período cerrado) ========== */
 .readonly-banner {
   display: flex; align-items: center; gap: 10px;
