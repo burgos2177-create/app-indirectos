@@ -9,8 +9,15 @@ import {
 import { navigate } from '../state/router.js';
 import { money, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
 import { periodoActual } from '../util/calendario.js';
+import { calcularProyeccion } from './escenario.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
+
+// Factor patronal para estimar el costo total (sueldo + cuotas). Igual que la
+// proyección; en v2 podría venir de configuración.
+const FACTOR_PATRONAL = 1.35;
+const SEMANAS_ANO = 52;
+const QUINCENAS_ANO = 24;
 
 // tipo de personal → tipo de item que bitácora consume del buzón.
 const BUZON_TIPO = {
@@ -44,6 +51,45 @@ function sumaNeto(doc) {
   return Object.values(doc.empleados || {}).reduce((s, e) => s + calc(e, diasLab).neto, 0);
 }
 
+// La fecha de corte es la fecha límite para liquidar el período.
+const DIA_MS = 86400000;
+const startOfDay = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+function vencInfo(vencMs, cerrado) {
+  if (!vencMs) return { txt: '—', cls: 'muted' };
+  if (cerrado) return { txt: 'Liquidado', cls: 'ok' };
+  const dias = Math.round((startOfDay(vencMs) - startOfDay(Date.now())) / DIA_MS);
+  if (dias < 0) return { txt: `Vencido hace ${-dias}d`, cls: 'danger' };
+  if (dias === 0) return { txt: 'Vence hoy', cls: 'danger' };
+  if (dias <= 2) return { txt: `Vence en ${dias}d`, cls: 'warn' };
+  return { txt: `Vence en ${dias}d`, cls: '' };
+}
+
+const vencimientoDe = (doc) => Number(doc?.fechaVencimiento) || Number(doc?.fechaCorte) || 0;
+
+const ESTADO_TAG = {
+  cerrado: ['ok', 'Cerrado'],
+  programado: ['accent', 'Programado'],
+  borrador: ['warn', 'Borrador']
+};
+function estadoBadge(doc) {
+  if (!doc) return h('span', { class: 'tag muted' }, 'Sin armar');
+  const [cls, label] = ESTADO_TAG[doc.estado] || ESTADO_TAG.borrador;
+  return h('span', { class: 'tag ' + cls }, label);
+}
+
+function kpi(label, value, cls = '') {
+  return h('div', { class: 'kpi ' + cls }, [
+    h('span', { class: 'kpi-label' }, label),
+    h('span', { class: 'kpi-value' }, value)
+  ]);
+}
+
+function mismoMes(ms, ref) {
+  const d = new Date(ms);
+  return d.getMonth() === ref.getMonth() && d.getFullYear() === ref.getFullYear();
+}
+
 // ===================== LISTA (carriles + histórico) =====================
 
 export async function renderPeriodos() {
@@ -59,15 +105,17 @@ export async function renderPeriodos() {
   }
   const cal = meta.calendarioSemanal;
   const empArr = Object.entries(empleados || {}).map(([id, e]) => ({ id, ...e }));
+  const activosAll = empArr.filter(e => e.activo !== false);
 
   const carriles = TIPOS.map(tipo => {
     const per = periodoActual(tipo, new Date(), cal);
     const doc = (periodos || {})[per.periodoId] || null;
-    const activos = empArr.filter(e => e.tipo === tipo && e.activo !== false).length;
-    return { tipo, per, doc, activos };
+    const activosArr = empArr.filter(e => e.tipo === tipo && e.activo !== false);
+    const proyectado = activosArr.reduce((s, e) => s + (Number(e.sueldoBase) || 0), 0);
+    return { tipo, per, doc, activos: activosArr.length, proyectado };
   });
 
-  const cardsWrap = h('div', { class: 'carril-grid' }, carriles.map(c => carrilCard(c, cal)));
+  const cardsWrap = h('div', { class: 'carril-grid' }, carriles.map(c => carrilCard(c)));
 
   // Histórico: todos los períodos guardados, más reciente primero.
   const hist = Object.entries(periodos || {})
@@ -77,7 +125,9 @@ export async function renderPeriodos() {
   renderShell(crumbs, h('div', {}, [
     h('h1', {}, 'Períodos de nómina'),
     h('p', { class: 'muted', style: { margin: '0 0 16px' } },
-      'Cuatro carriles independientes. Arma el período actual de cada uno, captura días/deducciones y ciérralo para enviarlo al buzón; el contador lo aprueba en bitácora.'),
+      'Cuatro carriles independientes. Arma el período, prográmalo con su fecha de liquidación, captura días/deducciones y ciérralo para enviarlo al buzón.'),
+    resumenPlantilla(activosAll, periodos),
+    h('h2', {}, 'Períodos actuales'),
     cardsWrap,
     h('h2', {}, 'Histórico'),
     hist.length === 0
@@ -86,14 +136,48 @@ export async function renderPeriodos() {
   ]));
 }
 
-function carrilCard(c, cal) {
-  const { tipo, per, doc, activos } = c;
-  const estadoTag = !doc
-    ? h('span', { class: 'tag muted' }, 'Sin armar')
-    : doc.estado === 'cerrado'
-      ? h('span', { class: 'tag ok' }, 'Cerrado')
-      : h('span', { class: 'tag warn' }, 'Borrador');
+// Resumen del costo mensual de la plantilla real + lo comprometido este mes.
+function resumenPlantilla(activosAll, periodos) {
+  const proy = calcularProyeccion(activosAll, FACTOR_PATRONAL);
+  const now = new Date();
+  const periodosArr = Object.entries(periodos || {}).map(([id, p]) => ({ id, ...p }));
+  const delMes = periodosArr.filter(p => p.fechaCorte && mismoMes(p.fechaCorte, now));
+  const netoMes = delMes.reduce((s, p) => s + (p.totalNeto != null ? p.totalNeto : sumaNeto(p)), 0);
 
+  const breakdown = TIPOS.map(t => {
+    const bruto = proy.porTipo[t] || 0;
+    const n = proy.counts[t] || 0;
+    const mensual = periodicidadDeTipo(t) === 'semanal' ? bruto * SEMANAS_ANO / 12 : bruto * QUINCENAS_ANO / 12;
+    return h('div', { class: 'tipo-row' }, [
+      h('div', {}, [
+        h('span', { class: 'tag' }, tipoPersonalLabel[t]),
+        h('span', { class: 'muted', style: { fontSize: '11px', marginLeft: '6px' } },
+          `${num0(n)} pers · ${periodicidadDeTipo(t) === 'semanal' ? 'semanal' : 'quincenal'}`)
+      ]),
+      h('div', { class: 'tipo-val' }, [h('span', { class: 'muted', style: { fontSize: '11px' } }, 'Por período: '), h('b', {}, money(bruto))]),
+      h('div', { class: 'tipo-val' }, [h('span', { class: 'muted', style: { fontSize: '11px' } }, 'Mensual: '), h('b', {}, money(mensual))])
+    ]);
+  });
+
+  return h('div', { class: 'card' }, [
+    h('h3', {}, 'Plantilla activa · costo mensual'),
+    h('div', { class: 'kpi-row' }, [
+      kpi('Plantilla', num0(activosAll.length) + ' pers.'),
+      kpi('Nómina mensual (bruto)', money(proy.brutoMensual), 'highlight'),
+      kpi('Costo total mensual', money(proy.costoTotalMensual), 'accent'),
+      kpi('Nómina anual (bruto)', money(proy.brutoAnual)),
+      kpi('Comprometido este mes', money(netoMes))
+    ]),
+    h('p', { class: 'muted', style: { fontSize: '11px', margin: '10px 0 0' } },
+      `Costo total = bruto × ${FACTOR_PATRONAL} (cuotas patronales estimadas). "Comprometido este mes" suma el neto de los períodos con corte en el mes actual.`),
+    h('div', { class: 'tipo-breakdown', style: { marginTop: '12px' } }, breakdown)
+  ]);
+}
+
+function carrilCard(c) {
+  const { tipo, per, doc, activos, proyectado } = c;
+  const venc = doc ? vencimientoDe(doc) : per.fechaCorte;
+  const vi = vencInfo(venc, doc?.estado === 'cerrado');
   const totalNeto = doc ? sumaNeto(doc) : null;
 
   const accion = doc
@@ -101,18 +185,22 @@ function carrilCard(c, cal) {
         doc.estado === 'cerrado' ? 'Ver período' : 'Continuar captura')
     : activos === 0
       ? h('button', { class: 'btn sm', disabled: true }, 'Sin personal activo')
-      : h('button', { class: 'btn primary sm', onClick: () => armarPeriodo(tipo, cal) }, '+ Armar período actual');
+      : h('button', { class: 'btn primary sm', onClick: () => armarPeriodo(tipo) }, '+ Armar período actual');
 
   return h('div', { class: 'carril-card' }, [
     h('div', { class: 'carril-head' }, [
       h('h3', {}, tipoPersonalLabel[tipo]),
-      estadoTag
+      h('div', { class: 'row', style: { gap: '6px' } }, [
+        estadoBadge(doc),
+        h('span', { class: 'tag ' + vi.cls }, vi.txt)
+      ])
     ]),
     h('div', { class: 'muted', style: { fontSize: '12px' } }, per.label),
     h('div', { class: 'carril-meta' }, [
       cm('Personal activo', num0(activos) + ' pers.'),
-      cm('Periodicidad', periodicidadDeTipo(tipo) === 'semanal' ? 'Semanal' : 'Quincenal'),
-      doc ? cm('Neto', money(totalNeto)) : null
+      cm('Vence', dateMx(venc)),
+      cm('Proyectado', money(proyectado)),
+      doc ? cm('Neto capturado', money(totalNeto)) : null
     ]),
     h('div', { class: 'row' }, [accion])
   ]);
@@ -132,28 +220,38 @@ function historicoTable(rows) {
         h('th', {}, 'Tipo'),
         h('th', {}, 'Período'),
         h('th', {}, 'Estado'),
+        h('th', {}, 'Vence'),
+        h('th', { class: 'num' }, 'Proyectado'),
         h('th', { class: 'num' }, 'Neto'),
         h('th', {}, 'Actualizado')
       ])]),
-      h('tbody', {}, rows.map(p => h('tr', {
-        style: { cursor: 'pointer' },
-        onClick: () => navigate('/periodos/' + p.id)
-      }, [
-        h('td', {}, h('span', { class: 'tag' }, tipoPersonalLabel[p.tipo] || p.tipo)),
-        h('td', {}, p.label || p.id),
-        h('td', {}, p.estado === 'cerrado'
-          ? h('span', { class: 'tag ok' }, 'Cerrado')
-          : h('span', { class: 'tag warn' }, 'Borrador')),
-        h('td', { class: 'num' }, money(p.totalNeto != null ? p.totalNeto : sumaNeto(p))),
-        h('td', { class: 'muted' }, dateMx(p.updatedAt || p.createdAt))
-      ])))
+      h('tbody', {}, rows.map(p => {
+        const venc = vencimientoDe(p);
+        const vi = vencInfo(venc, p.estado === 'cerrado');
+        return h('tr', {
+          style: { cursor: 'pointer' },
+          onClick: () => navigate('/periodos/' + p.id)
+        }, [
+          h('td', {}, h('span', { class: 'tag' }, tipoPersonalLabel[p.tipo] || p.tipo)),
+          h('td', {}, p.label || p.id),
+          h('td', {}, estadoBadge(p)),
+          h('td', {}, [
+            h('span', { class: 'muted', style: { fontSize: '12px' } }, dateMx(venc)),
+            h('span', { class: 'tag ' + vi.cls, style: { marginLeft: '6px', fontSize: '10px' } }, vi.txt)
+          ]),
+          h('td', { class: 'num muted' }, p.proyectadoBruto != null ? money(p.proyectadoBruto) : '—'),
+          h('td', { class: 'num' }, money(p.totalNeto != null ? p.totalNeto : sumaNeto(p))),
+          h('td', { class: 'muted' }, dateMx(p.updatedAt || p.createdAt))
+        ]);
+      }))
     ])
   ]);
 }
 
-async function armarPeriodo(tipo, cal) {
+async function armarPeriodo(tipo) {
   try {
-    const per = periodoActual(tipo, new Date(), cal);
+    const meta = await getMeta();
+    const per = periodoActual(tipo, new Date(), meta.calendarioSemanal);
     const existing = await getPeriodo(per.periodoId);
     if (existing) { navigate('/periodos/' + per.periodoId); return; }
 
@@ -164,12 +262,15 @@ async function armarPeriodo(tipo, cal) {
       return;
     }
     const empMap = {};
+    let proyectadoBruto = 0;
     for (const [id, e] of activos) {
       const ud = e.ultimasDeducciones || {};
+      const base = Number(e.sueldoBase) || 0;
+      proyectadoBruto += base;
       empMap[id] = {
         nombre: e.nombre || '(sin nombre)',
         tipo: e.tipo,
-        sueldoBase: Number(e.sueldoBase) || 0,
+        sueldoBase: base,
         diasTrabajados: per.diasLaborables,
         horasExtra: 0,
         bonos: 0,
@@ -185,7 +286,9 @@ async function armarPeriodo(tipo, cal) {
       tipo: per.tipo, periodicidad: per.periodicidad,
       fechaInicio: per.fechaInicio, fechaCorte: per.fechaCorte,
       fechaInicioISO: per.fechaInicioISO, fechaCorteISO: per.fechaCorteISO,
+      fechaVencimiento: per.fechaCorte,   // se debe liquidar a más tardar en el corte
       label: per.label, diasLaborables: per.diasLaborables,
+      proyectadoBruto: round2(proyectadoBruto),
       estado: 'borrador', empleados: empMap,
       createdAt: Date.now(), updatedAt: Date.now(), createdBy: state.user?.uid || null
     });
@@ -237,8 +340,12 @@ export async function renderPeriodoDetalle({ params }) {
   const kPercep = h('span', { class: 'kpi-value' }, '');
   const kDed = h('span', { class: 'kpi-value' }, '');
   const kNeto = h('span', { class: 'kpi-value' }, '');
+  const proyectadoBase = doc.proyectadoBruto != null
+    ? Number(doc.proyectadoBruto)
+    : rows.reduce((s, r) => s + (Number(r.sueldoBase) || 0), 0);
   const kpiRow = h('div', { class: 'kpi-row' }, [
     h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Personal'), h('span', { class: 'kpi-value' }, num0(rows.length) + ' pers.')]),
+    h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Proyectado (base)'), h('span', { class: 'kpi-value' }, money(proyectadoBase))]),
     h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Percepciones'), kPercep]),
     h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Deducciones'), kDed]),
     h('div', { class: 'kpi accent' }, [h('span', { class: 'kpi-label' }, 'Neto a pagar'), kNeto])
@@ -446,6 +553,23 @@ export async function renderPeriodoDetalle({ params }) {
     } catch (err) { toast('Error: ' + err.message, 'danger'); }
   }
 
+  async function programar() {
+    try {
+      const venc = vencimientoDe(doc);
+      await updatePeriodo(periodoId, { estado: 'programado', fechaVencimiento: venc });
+      toast('Período programado · vence ' + dateMx(venc), 'ok');
+      renderPeriodoDetalle({ params });
+    } catch (err) { toast('Error: ' + err.message, 'danger'); }
+  }
+  async function volverABorrador() {
+    try {
+      await updatePeriodo(periodoId, { estado: 'borrador' });
+      toast('Movido a borrador', 'ok');
+      renderPeriodoDetalle({ params });
+    } catch (err) { toast('Error: ' + err.message, 'danger'); }
+  }
+
+  const programado = doc.estado === 'programado';
   const actions = cerrado
     ? h('div', { class: 'row', style: { marginTop: '14px', justifyContent: 'flex-end' } }, [
         h('button', { class: 'btn ghost', onClick: () => navigate('/periodos') }, 'Volver'),
@@ -453,16 +577,26 @@ export async function renderPeriodoDetalle({ params }) {
       ])
     : h('div', { class: 'row', style: { marginTop: '14px', justifyContent: 'flex-end' } }, [
         h('button', { class: 'btn ghost', onClick: () => navigate('/periodos') }, 'Volver'),
+        programado
+          ? h('button', { class: 'btn ghost', onClick: volverABorrador }, 'Volver a borrador')
+          : h('button', { class: 'btn', onClick: programar }, 'Programar liquidación'),
         guardarBtn,
         cerrarBtn
       ]);
+
+  const venc = vencimientoDe(doc);
+  const vi = vencInfo(venc, cerrado);
 
   recompute();
 
   renderShell(crumbs, h('div', {}, [
     h('h1', {}, `${tipoPersonalLabel[doc.tipo]} · nómina`),
-    h('p', { class: 'muted', style: { margin: '0 0 14px' } },
-      `${doc.label} · ${periodicidadDeTipo(doc.tipo) === 'semanal' ? 'Semanal' : 'Quincenal'} · ${diasLab} días laborables`),
+    h('div', { class: 'row', style: { margin: '0 0 14px', gap: '8px' } }, [
+      estadoBadge(doc),
+      h('span', { class: 'tag ' + vi.cls }, `${vi.txt} · ${dateMx(venc)}`),
+      h('span', { class: 'muted', style: { fontSize: '12px' } },
+        `${doc.label} · ${periodicidadDeTipo(doc.tipo) === 'semanal' ? 'Semanal' : 'Quincenal'} · ${diasLab} días`)
+    ]),
     cerrado
       ? h('div', { class: 'readonly-banner' }, [
           h('span', { class: 'tag ok' }, 'Cerrado'),
