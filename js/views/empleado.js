@@ -11,6 +11,10 @@ import { TIPOS_DOCUMENTO, esUrlValida } from '../services/documentos.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
 
+// Equivalente mensual del sueldo base según periodicidad (operativo=semanal ×52/12,
+// resto=quincenal ×2). Solo informativo; el pago real es por período.
+const mensualDe = (tipo, base) => periodicidadDeTipo(tipo) === 'semanal' ? base * 52 / 12 : base * 2;
+
 export async function renderEmpleadoEditor({ params }) {
   const isNuevo = params.id === 'nuevo';
   const crumbs = [
@@ -54,6 +58,8 @@ export async function renderEmpleadoEditor({ params }) {
     onChange: () => {
       draft.tipo = refs.tipo.value;
       refs.periodicidadLabel.textContent = periodicidadDeTipo(draft.tipo) === 'semanal' ? 'Semanal' : 'Quincenal';
+      refs.sueldoLabel.textContent = sueldoLabelText();
+      updateMensualHint();
     }
   }, TIPOS.map(t => h('option', { value: t, selected: draft.tipo === t }, tipoPersonalLabel[t])));
   if (!draft.tipo) draft.tipo = refs.tipo.value;
@@ -61,8 +67,17 @@ export async function renderEmpleadoEditor({ params }) {
     periodicidadDeTipo(draft.tipo) === 'semanal' ? 'Semanal' : 'Quincenal');
   refs.sueldoBase = h('input', {
     type: 'number', step: '0.01', min: '0',
-    value: draft.sueldoBase || 0, placeholder: '0.00'
+    value: draft.sueldoBase || 0, placeholder: '0.00',
+    onInput: () => updateMensualHint()
   });
+  const sueldoLabelText = () => `Sueldo base (${periodicidadDeTipo(draft.tipo) === 'semanal' ? 'por semana' : 'por quincena'})`;
+  refs.sueldoLabel = h('label', {}, sueldoLabelText());
+  refs.mensualHint = h('span', { class: 'muted', style: { fontSize: '11px' } }, '');
+  function updateMensualHint() {
+    const base = Number(refs.sueldoBase.value) || 0;
+    refs.mensualHint.textContent = `≈ ${money(mensualDe(draft.tipo, base))} / mes`;
+  }
+  updateMensualHint();
   refs.notas = h('textarea', { rows: 3, placeholder: 'Notas internas (opcional)' }, draft.notas || '');
 
   // Puesto y datos de contacto.
@@ -348,8 +363,9 @@ export async function renderEmpleadoEditor({ params }) {
           refs.tipo
         ]),
         h('div', { class: 'field' }, [
-          h('label', {}, `Sueldo base (${periodicidadDeTipo(draft.tipo) === 'semanal' ? 'por semana' : 'por quincena'})`),
-          refs.sueldoBase
+          refs.sueldoLabel,
+          refs.sueldoBase,
+          refs.mensualHint
         ])
       ]),
       h('div', { class: 'grid-3', style: { marginTop: '10px' } }, [
