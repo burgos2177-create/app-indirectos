@@ -39,6 +39,11 @@ const MODO_LABEL = {
   sogrub_empresa: 'Empresa SOGRUB'
 };
 
+// Ámbito del indirecto — contabilidad separa oficina de campo. Lo definimos aquí
+// para que llegue ya clasificado al buzón.
+const AMBITO_LABEL = { oficina: 'Oficina', campo: 'Campo' };
+const ambitoLabel = (a) => AMBITO_LABEL[a] || '—';
+
 export async function renderGastos() {
   const crumbs = [{ label: 'Inicio', to: '/' }, { label: 'Gastos' }];
   renderShell(crumbs, h('div', { class: 'empty' }, 'Cargando gastos…'));
@@ -99,6 +104,7 @@ function gastosTable(rows, obras, cats, refresh) {
       h('thead', {}, [h('tr', {}, [
         h('th', {}, 'Fecha'),
         h('th', {}, 'Categoría'),
+        h('th', {}, 'Ámbito'),
         h('th', {}, 'Concepto'),
         h('th', { class: 'num' }, 'Monto'),
         h('th', {}, 'Atribución'),
@@ -124,6 +130,9 @@ function gastoRow(g, obras, cats, refresh) {
   return h('tr', {}, [
     h('td', { class: 'muted' }, dateMx(g.fechaISO)),
     h('td', {}, h('span', { class: 'tag' }, g.categoriaNombre || g.categoria || '—')),
+    h('td', {}, g.ambito
+      ? h('span', { class: 'tag ' + (g.ambito === 'campo' ? 'warn' : '') }, ambitoLabel(g.ambito))
+      : h('span', { class: 'muted' }, '—')),
     h('td', {}, [
       g.concepto || '—',
       g.proveedorNombre ? h('div', { class: 'muted', style: { fontSize: '11px' } }, g.proveedorNombre) : null
@@ -260,11 +269,28 @@ async function gastoDialog({ cats, obras, gasto = null, onDone }) {
   });
   renderExtra();
 
+  // Ámbito del indirecto (oficina / campo).
+  let ambito = gasto?.ambito || 'oficina';
+  const ambitoChips = h('div', { class: 'chips-row' }, []);
+  ['oficina', 'campo'].forEach(val => {
+    const c = h('button', { class: 'chip' + (ambito === val ? ' active' : ''), onClick: () => {
+      ambito = val;
+      [...ambitoChips.children].forEach(ch => ch.classList.remove('active'));
+      c.classList.add('active');
+    } }, AMBITO_LABEL[val]);
+    ambitoChips.appendChild(c);
+  });
+
   await modal({
     title: isEdit ? 'Editar gasto' : 'Nuevo gasto indirecto',
     size: 'lg',
     body: h('div', {}, [
       h('div', { class: 'grid-2' }, [field('Fecha', fecha), field('Categoría', categoria)]),
+      h('div', { style: { marginTop: '12px' } }, [
+        h('label', { class: 'muted', style: { fontSize: '12px' } }, 'Ámbito del indirecto'),
+        ambitoChips,
+        h('span', { class: 'muted', style: { fontSize: '11px' } }, 'Contabilidad separa los indirectos de oficina de los de campo; se envía ya clasificado.')
+      ]),
       h('div', { class: 'grid-2', style: { marginTop: '10px' } }, [field('Concepto', concepto), field('Proveedor', proveedor)]),
       h('div', { class: 'grid-3', style: { marginTop: '10px' } }, [
         field('Subtotal', subtotal),
@@ -305,6 +331,7 @@ async function gastoDialog({ cats, obras, gasto = null, onDone }) {
         categoriaNombre: cat?.nombre || categoria.value,
         concepto: concepto.value.trim(),
         proveedorNombre: proveedor.value.trim() || null,
+        ambito,
         monto: { subtotal: sub, iva: ivaV, importe },
         modo,
         obraId, conceptoKey: ck, prorrateo,
@@ -324,7 +351,8 @@ async function gastoDialog({ cats, obras, gasto = null, onDone }) {
 
 // Construye los item(s) del buzón según el contrato de contabilidad:
 //   { tipo, origenApp, obraId, concepto, monto:{subtotal,iva,importe},
-//     fecha:"YYYY-MM-DD", estado:"recibido", creadoPor, creadoAt }
+//     fecha:"YYYY-MM-DD", estado:"recibido", creadoPor, creadoAt,
+//     ambito:"oficina"|"campo" }
 //   opcionales: proveedorNombre, conceptoKey, desglose[]
 // - obra_unica      → 1 item con obraId.
 // - prorrateo_obras → N items (uno por obra) con su porción del monto → N movimientos de proyecto.
@@ -338,6 +366,7 @@ function buildBuzonItems(g) {
     fecha: g.fechaISO,
     estado: 'recibido',
     creadoPor: state.user?.uid || null,
+    ambito: g.ambito || 'oficina',
     categoria: g.categoria,
     categoriaNombre: g.categoriaNombre,
     gastoId: g.id
