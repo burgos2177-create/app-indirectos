@@ -3,17 +3,39 @@ import { renderShell } from './shell.js';
 import { state } from '../state/store.js';
 import {
   getEmpleado, createEmpleado, updateEmpleado, removeEmpleado,
-  listObrasLegacy
+  listObrasLegacy, listPeriodos
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
-import { money, num2, dateMx, tipoPersonalLabel, periodicidadDeTipo, uid as randId } from '../util/format.js';
+import { money, num2, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo, uid as randId } from '../util/format.js';
 import { TIPOS_DOCUMENTO, esUrlValida } from '../services/documentos.js';
+import { calcularFiniquito } from '../util/finiquito.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
 
 // Equivalente mensual del sueldo base según periodicidad (operativo=semanal ×52/12,
 // resto=quincenal ×2). Solo informativo; el pago real es por período.
 const mensualDe = (tipo, base) => periodicidadDeTipo(tipo) === 'semanal' ? base * 52 / 12 : base * 2;
+
+// Acumula la cotización del empleado a partir de los períodos CERRADOS que lo
+// incluyen (semanas: operativo +1, quincenal +2; y montos recibido/base/bonos).
+export function cotizacionDe(empleadoId, periodos) {
+  let semanas = 0, recibido = 0, base = 0, bonos = 0, nPeriodos = 0, ultimo = 0;
+  for (const p of Object.values(periodos || {})) {
+    if (p.estado !== 'cerrado') continue;
+    const e = p.empleados?.[empleadoId];
+    if (!e) continue;
+    nPeriodos++;
+    semanas += p.periodicidad === 'semanal' ? 1 : 2;
+    recibido += Number(e.neto) || 0;
+    const diasLab = Number(p.diasLaborables) || 0;
+    const dias = Number(e.diasTrabajados);
+    const diasEf = Number.isFinite(dias) ? dias : diasLab;
+    base += diasLab > 0 ? (Number(e.sueldoBase) || 0) * (diasEf / diasLab) : (Number(e.sueldoBase) || 0);
+    bonos += e.bonoPagado != null ? Number(e.bonoPagado) || 0 : (e.pagarBono === false ? 0 : Number(e.bonos) || 0);
+    ultimo = Math.max(ultimo, Number(p.fechaCorte) || 0);
+  }
+  return { semanas, recibido, base, bonos, nPeriodos, ultimo };
+}
 
 export async function renderEmpleadoEditor({ params }) {
   const isNuevo = params.id === 'nuevo';
@@ -25,11 +47,12 @@ export async function renderEmpleadoEditor({ params }) {
 
   renderShell(crumbs, h('div', { class: 'empty' }, 'Cargando…'));
 
-  let empleado, obras;
+  let empleado, obras, periodos;
   try {
-    [empleado, obras] = await Promise.all([
+    [empleado, obras, periodos] = await Promise.all([
       isNuevo ? Promise.resolve(emptyEmpleado()) : getEmpleado(params.id),
-      listObrasLegacy()
+      listObrasLegacy(),
+      isNuevo ? Promise.resolve({}) : listPeriodos()
     ]);
   } catch (err) {
     renderShell(crumbs, h('div', { class: 'empty' }, 'Error: ' + err.message));
@@ -70,12 +93,19 @@ export async function renderEmpleadoEditor({ params }) {
     value: draft.sueldoBase || 0, placeholder: '0.00',
     onInput: () => updateMensualHint()
   });
+  refs.bonos = h('input', {
+    type: 'number', step: '0.01', min: '0',
+    value: draft.bonos || 0, placeholder: '0.00',
+    onInput: () => updateMensualHint()
+  });
   const sueldoLabelText = () => `Sueldo base (${periodicidadDeTipo(draft.tipo) === 'semanal' ? 'por semana' : 'por quincena'})`;
   refs.sueldoLabel = h('label', {}, sueldoLabelText());
-  refs.mensualHint = h('span', { class: 'muted', style: { fontSize: '11px' } }, '');
+  refs.mensualHint = h('span', { class: 'muted', style: { fontSize: '12px' } }, '');
   function updateMensualHint() {
     const base = Number(refs.sueldoBase.value) || 0;
-    refs.mensualHint.textContent = `≈ ${money(mensualDe(draft.tipo, base))} / mes`;
+    const bono = Number(refs.bonos.value) || 0;
+    const total = base + bono;
+    refs.mensualHint.innerHTML = `Total por período: <b style="color:var(--accent)">${money(total)}</b> (base ${money(base)} + bono ${money(bono)}) · ≈ ${money(mensualDe(draft.tipo, total))} / mes`;
   }
   updateMensualHint();
   refs.notas = h('textarea', { rows: 3, placeholder: 'Notas internas (opcional)' }, draft.notas || '');
@@ -282,6 +312,7 @@ export async function renderEmpleadoEditor({ params }) {
       nss: refs.nss.value.trim() || null,
       tipo: refs.tipo.value,
       sueldoBase,
+      bonos: Number(refs.bonos.value) || 0,
       telefono: refs.telefono.value.trim() || null,
       email: refs.email.value.trim() || null,
       direccion: refs.direccion.value.trim() || null,
@@ -357,17 +388,15 @@ export async function renderEmpleadoEditor({ params }) {
         h('div', { class: 'field' }, [h('label', {}, 'Nombre *'), refs.nombre]),
         h('div', { class: 'field' }, [h('label', {}, 'Puesto'), refs.puesto])
       ]),
-      h('div', { class: 'grid-2', style: { marginTop: '10px' } }, [
+      h('div', { class: 'grid-3', style: { marginTop: '10px' } }, [
         h('div', { class: 'field' }, [
           h('label', {}, ['Tipo *  ', refs.periodicidadLabel]),
           refs.tipo
         ]),
-        h('div', { class: 'field' }, [
-          refs.sueldoLabel,
-          refs.sueldoBase,
-          refs.mensualHint
-        ])
+        h('div', { class: 'field' }, [refs.sueldoLabel, refs.sueldoBase]),
+        h('div', { class: 'field' }, [h('label', {}, 'Bono por rendimiento (por período)'), refs.bonos])
       ]),
+      h('div', { style: { marginTop: '6px' } }, refs.mensualHint),
       h('div', { class: 'grid-3', style: { marginTop: '10px' } }, [
         h('div', { class: 'field' }, [h('label', {}, 'RFC'), refs.rfc]),
         h('div', { class: 'field' }, [h('label', {}, 'CURP'), refs.curp]),
@@ -375,6 +404,8 @@ export async function renderEmpleadoEditor({ params }) {
       ]),
       h('div', { class: 'field', style: { marginTop: '10px' } }, [h('label', {}, 'Notas internas'), refs.notas])
     ]),
+
+    isNuevo ? null : cotizacionCard(params.id, empleado, periodos),
 
     h('div', { class: 'card' }, [
       h('h3', {}, 'Contacto'),
@@ -445,6 +476,7 @@ function emptyEmpleado() {
     puesto: '',
     tipo: 'operativo',
     sueldoBase: 0,
+    bonos: 0,
     telefono: '',
     email: '',
     direccion: '',
@@ -459,4 +491,50 @@ function emptyEmpleado() {
 
 function numInput(value) {
   return h('input', { type: 'number', step: '0.01', min: '0', value });
+}
+
+// Tarjeta de antigüedad, semanas cotizadas y finiquito estimado.
+function cotizacionCard(empleadoId, empleado, periodos) {
+  const cot = cotizacionDe(empleadoId, periodos);
+  const fin = calcularFiniquito(empleado);
+  const alta = Number(empleado.fechaAlta) || Number(empleado.createdAt) || null;
+  const anios = Math.floor(fin.anios);
+  const diasRest = fin.diasAntiguedad - anios * 365;
+
+  const kpiMini = (label, value) => h('div', { class: 'kpi' }, [
+    h('span', { class: 'kpi-label' }, label),
+    h('span', { class: 'kpi-value' }, value)
+  ]);
+  const finRow = (label, value) => h('div', { class: 'tipo-row', style: { gridTemplateColumns: '1fr auto' } }, [
+    h('div', { class: 'muted' }, label),
+    h('div', { class: 'tipo-val' }, h('b', {}, value))
+  ]);
+
+  return h('div', { class: 'card' }, [
+    h('h3', {}, 'Antigüedad, cotización y finiquito'),
+    h('div', { class: 'kpi-row' }, [
+      kpiMini('Semanas cotizadas', num0(cot.semanas)),
+      kpiMini('Períodos pagados', num0(cot.nPeriodos)),
+      kpiMini('Total recibido', money(cot.recibido)),
+      kpiMini('Antigüedad', alta ? `${anios} año(s) ${diasRest} d` : '—'),
+      kpiMini('Fecha de alta', alta ? dateMx(alta) : '—')
+    ]),
+    h('p', { class: 'muted', style: { fontSize: '11px', margin: '8px 0 0' } },
+      `Pagado acumulado — base: ${money(cot.base)} · bonos: ${money(cot.bonos)}. (Semanas: operativo +1, quincenal +2 por período cerrado.)`),
+
+    h('h4', { style: { margin: '14px 0 8px', fontSize: '12px', color: 'var(--text-1)', textTransform: 'uppercase', letterSpacing: '.5px' } },
+      'Finiquito estimado a hoy (con sueldo base)'),
+    h('div', { class: 'tipo-breakdown' }, [
+      finRow('Salario diario', money(fin.salarioDiario)),
+      finRow(`Aguinaldo proporcional (${fin.diasAguinaldo} días)`, money(fin.aguinaldo)),
+      finRow(`Vacaciones proporcionales (${fin.diasVacaciones} días/año)`, money(fin.vacaciones)),
+      finRow('Prima vacacional (25%)', money(fin.primaVacacional))
+    ]),
+    h('div', { class: 'kpi accent', style: { marginTop: '10px', maxWidth: '280px' } }, [
+      h('span', { class: 'kpi-label' }, 'Finiquito estimado'),
+      h('span', { class: 'kpi-value' }, money(fin.total))
+    ]),
+    h('p', { class: 'muted', style: { fontSize: '11px', margin: '8px 0 0' } },
+      'Estimado orientativo (separación voluntaria): aguinaldo 15 días, vacaciones LFT 2023 + prima 25%. Se calcula con el sueldo base; no incluye indemnización ni días pendientes del período en curso.')
+  ]);
 }

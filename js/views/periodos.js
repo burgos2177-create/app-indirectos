@@ -38,7 +38,7 @@ function calc(row, diasLaborables) {
   const diasEf = Number.isFinite(dias) ? dias : diasLaborables;
   const sueldoProp = diasLaborables > 0 ? base * (diasEf / diasLaborables) : base;
   const extra = Number(row.horasExtra) || 0;
-  const bonos = Number(row.bonos) || 0;
+  const bonos = row.pagarBono === false ? 0 : (Number(row.bonos) || 0);
   const prest = Number(row.prestaciones) || 0;
   const percepciones = sueldoProp + extra + bonos + prest;
   const d = row.deducciones || {};
@@ -106,7 +106,9 @@ async function publicarPeriodo(periodoId, doc, empMap) {
     empSnapshot[r.empleadoId] = {
       nombre: r.nombre, tipo: r.tipo, sueldoBase: Number(r.sueldoBase) || 0,
       diasTrabajados: Number(r.diasTrabajados) || 0, horasExtra: Number(r.horasExtra) || 0,
-      bonos: Number(r.bonos) || 0, prestaciones: Number(r.prestaciones) || 0,
+      bonos: Number(r.bonos) || 0, pagarBono: r.pagarBono !== false,
+      bonoPagado: r.pagarBono === false ? 0 : round2(Number(r.bonos) || 0),
+      prestaciones: Number(r.prestaciones) || 0,
       deducciones: { ...(r.deducciones || {}) }, obrasAsignadas: r.obrasAsignadas || {},
       percepciones: round2(c.percepciones), deduccionesTotal: round2(c.dedTotal), neto: round2(c.neto)
     };
@@ -400,7 +402,8 @@ async function armarPeriodo(tipo) {
         sueldoBase: base,
         diasTrabajados: per.diasLaborables,
         horasExtra: 0,
-        bonos: 0,
+        bonos: Number(e.bonos) || 0,
+        pagarBono: (Number(e.bonos) || 0) > 0,
         prestaciones: 0,
         deducciones: {
           isr: Number(ud.isr) || 0, imss: Number(ud.imss) || 0,
@@ -448,7 +451,8 @@ async function regenerarPeriodo(periodoId) {
       const ud = e.ultimasDeducciones || {};
       empMap[id] = {
         nombre: e.nombre || '(sin nombre)', tipo: e.tipo, sueldoBase: base,
-        diasTrabajados: doc.diasLaborables, horasExtra: 0, bonos: 0, prestaciones: 0,
+        diasTrabajados: doc.diasLaborables, horasExtra: 0,
+        bonos: Number(e.bonos) || 0, pagarBono: (Number(e.bonos) || 0) > 0, prestaciones: 0,
         deducciones: {
           isr: Number(ud.isr) || 0, imss: Number(ud.imss) || 0,
           infonavit: Number(ud.infonavit) || 0, prestamos: Number(ud.prestamos) || 0
@@ -541,6 +545,7 @@ export async function renderPeriodoDetalle({ params }) {
     diasTrabajados: e.diasTrabajados != null ? Number(e.diasTrabajados) : diasLab,
     horasExtra: Number(e.horasExtra) || 0,
     bonos: Number(e.bonos) || 0,
+    pagarBono: e.pagarBono !== false,
     prestaciones: Number(e.prestaciones) || 0,
     deducciones: {
       isr: Number(e.deducciones?.isr) || 0, imss: Number(e.deducciones?.imss) || 0,
@@ -592,6 +597,12 @@ export async function renderPeriodoDetalle({ params }) {
     const diasEl = cellInput(() => r.diasTrabajados, v => { r.diasTrabajados = v === '' ? '' : Number(v); }, 'dias');
     const heEl = cellInput(() => r.horasExtra, v => { r.horasExtra = Number(v) || 0; });
     const bonEl = cellInput(() => r.bonos, v => { r.bonos = Number(v) || 0; });
+    const bonoChk = h('input', {
+      type: 'checkbox', checked: r.pagarBono !== false, disabled: cerrado, title: 'Pagar bono',
+      onChange: () => { r.pagarBono = bonoChk.checked; bonEl.disabled = cerrado || !bonoChk.checked; recompute(); }
+    });
+    bonEl.disabled = cerrado || r.pagarBono === false;
+    const bonoCell = h('div', { class: 'row', style: { gap: '4px', flexWrap: 'nowrap' } }, [bonoChk, bonEl]);
     const preEl = cellInput(() => r.prestaciones, v => { r.prestaciones = Number(v) || 0; });
     const isrEl = cellInput(() => r.deducciones.isr, v => { r.deducciones.isr = Number(v) || 0; });
     const imssEl = cellInput(() => r.deducciones.imss, v => { r.deducciones.imss = Number(v) || 0; });
@@ -602,7 +613,7 @@ export async function renderPeriodoDetalle({ params }) {
       h('td', { class: 'num muted' }, money(r.sueldoBase)),
       h('td', { class: 'cell-td' }, diasEl),
       h('td', { class: 'cell-td' }, heEl),
-      h('td', { class: 'cell-td' }, bonEl),
+      h('td', { class: 'cell-td' }, bonoCell),
       h('td', { class: 'cell-td' }, preEl),
       r._percep,
       h('td', { class: 'cell-td sep-l' }, isrEl),
@@ -642,6 +653,7 @@ export async function renderPeriodoDetalle({ params }) {
         diasTrabajados: Number(r.diasTrabajados) || 0,
         horasExtra: Number(r.horasExtra) || 0,
         bonos: Number(r.bonos) || 0,
+        pagarBono: r.pagarBono !== false,
         prestaciones: Number(r.prestaciones) || 0,
         deducciones: { ...r.deducciones },
         obrasAsignadas: r.obrasAsignadas || {}

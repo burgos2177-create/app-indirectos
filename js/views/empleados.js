@@ -1,9 +1,10 @@
 import { h, toast } from '../util/dom.js';
 import { renderShell } from './shell.js';
 import { state, setState } from '../state/store.js';
-import { listEmpleados, listObrasLegacy } from '../services/db.js';
+import { listEmpleados, listObrasLegacy, listPeriodos } from '../services/db.js';
 import { navigate } from '../state/router.js';
-import { money, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
+import { money, num0, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
+import { cotizacionDe } from './empleado.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
 
@@ -11,9 +12,9 @@ export async function renderEmpleados({ query } = {}) {
   renderShell([{ label: 'Inicio', to: '/' }, { label: 'Empleados' }],
     h('div', { class: 'empty' }, 'Cargando empleados…'));
 
-  let empleados, obras;
+  let empleados, obras, periodos;
   try {
-    [empleados, obras] = await Promise.all([listEmpleados(), listObrasLegacy()]);
+    [empleados, obras, periodos] = await Promise.all([listEmpleados(), listObrasLegacy(), listPeriodos()]);
   } catch (err) {
     renderShell([{ label: 'Inicio', to: '/' }, { label: 'Empleados' }],
       h('div', { class: 'empty' }, 'Error: ' + err.message));
@@ -73,7 +74,7 @@ export async function renderEmpleados({ query } = {}) {
           ? 'No hay empleados aún. Crea el primero.'
           : 'No hay empleados que coincidan con los filtros.')
       ])
-    : empleadosTable(filtrados, obras);
+    : empleadosTable(filtrados, obras, periodos);
 
   renderShell([{ label: 'Inicio', to: '/' }, { label: 'Empleados' }],
     h('div', {}, [head, chips, buscador, body]));
@@ -89,7 +90,7 @@ function chip(label, active, count, onClick) {
   ]);
 }
 
-function empleadosTable(rows, obras) {
+function empleadosTable(rows, obras, periodos) {
   return h('div', { class: 'card', style: { padding: 0, overflow: 'auto' } }, [
     h('table', { class: 'tbl' }, [
       h('thead', {}, [h('tr', {}, [
@@ -97,15 +98,17 @@ function empleadosTable(rows, obras) {
         h('th', {}, 'Tipo'),
         h('th', {}, 'Periodicidad'),
         h('th', { class: 'num' }, 'Sueldo base'),
+        h('th', { class: 'num' }, 'Sem. cotiz.'),
         h('th', {}, 'Obras (peso)'),
         h('th', {}, 'Estado')
       ])]),
-      h('tbody', {}, rows.map(e => empleadoRow(e, obras)))
+      h('tbody', {}, rows.map(e => empleadoRow(e, obras, periodos)))
     ])
   ]);
 }
 
-function empleadoRow(e, obras) {
+function empleadoRow(e, obras, periodos) {
+  const semanas = cotizacionDe(e.id, periodos).semanas;
   const obrasAsig = e.obrasAsignadas || {};
   const obrasTxt = Object.entries(obrasAsig).map(([oid, info]) => {
     const nombre = obras[oid]?.meta?.nombre || oid.slice(0, 6);
@@ -121,7 +124,11 @@ function empleadoRow(e, obras) {
     h('td', {}, h('b', {}, e.nombre || '(sin nombre)')),
     h('td', {}, h('span', { class: 'tag' }, tipoPersonalLabel[e.tipo] || e.tipo)),
     h('td', { class: 'muted' }, periodicidadDeTipo(e.tipo) === 'semanal' ? 'Semanal' : 'Quincenal'),
-    h('td', { class: 'num' }, money(e.sueldoBase || 0)),
+    h('td', { class: 'num' }, [
+      money(e.sueldoBase || 0),
+      Number(e.bonos) ? h('div', { class: 'muted', style: { fontSize: '10px' } }, `+ ${money(e.bonos)} bono`) : null
+    ]),
+    h('td', { class: 'num' }, num0(semanas)),
     h('td', {}, [
       typeof obrasTxt === 'string' ? obrasTxt : obrasTxt,
       !pesoOk && Object.keys(obrasAsig).length > 0
