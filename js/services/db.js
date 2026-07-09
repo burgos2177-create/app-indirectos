@@ -194,6 +194,9 @@ export async function setPeriodo(periodoId, data) {
 export async function updatePeriodo(periodoId, patch) {
   return rupdate(`periodos/${periodoId}`, { ...patch, updatedAt: Date.now() });
 }
+export async function removePeriodo(periodoId) {
+  return rremove(`periodos/${periodoId}`);
+}
 
 export async function setPeriodoEmpleado(periodoId, empleadoId, data) {
   return rset(`periodos/${periodoId}/empleados/${empleadoId}`, data);

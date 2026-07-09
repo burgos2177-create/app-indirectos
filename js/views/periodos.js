@@ -2,7 +2,7 @@ import { h, toast, modal } from '../util/dom.js';
 import { renderShell } from './shell.js';
 import { state } from '../state/store.js';
 import {
-  listPeriodos, getPeriodo, setPeriodo, updatePeriodo,
+  listPeriodos, getPeriodo, setPeriodo, updatePeriodo, removePeriodo,
   listEmpleados, updateEmpleado, getMeta,
   pushBuzonItem, getBuzonItem, deleteBuzonItem
 } from '../services/db.js';
@@ -234,7 +234,8 @@ function historicoTable(rows) {
         h('th', {}, 'Vence'),
         h('th', { class: 'num' }, 'Proyectado'),
         h('th', { class: 'num' }, 'Neto'),
-        h('th', {}, 'Actualizado')
+        h('th', {}, 'Actualizado'),
+        h('th', {}, '')
       ])]),
       h('tbody', {}, rows.map(p => {
         const venc = vencimientoDe(p);
@@ -252,7 +253,12 @@ function historicoTable(rows) {
           ]),
           h('td', { class: 'num muted' }, p.proyectadoBruto != null ? money(p.proyectadoBruto) : '—'),
           h('td', { class: 'num' }, money(p.totalNeto != null ? p.totalNeto : sumaNeto(p))),
-          h('td', { class: 'muted' }, dateMx(p.updatedAt || p.createdAt))
+          h('td', { class: 'muted' }, dateMx(p.updatedAt || p.createdAt)),
+          h('td', {}, h('button', {
+            class: 'btn sm ghost danger',
+            title: 'Eliminar período',
+            onClick: (e) => { e.stopPropagation(); eliminarPeriodoFlow(p, () => renderPeriodos()); }
+          }, '✕'))
         ]);
       }))
     ])
@@ -363,6 +369,36 @@ async function regenerarQuick(periodoId) {
     await regenerarPeriodo(periodoId);
     toast('Período actualizado con los nuevos salarios', 'ok');
     renderPeriodos();
+  } catch (err) { toast('Error: ' + err.message, 'danger'); }
+}
+
+// Elimina un período por completo. Si estaba cerrado, quita también su item del
+// buzón (bloquea si contabilidad ya lo procesó).
+async function eliminarPeriodoFlow(p, onDone) {
+  if (p.estado === 'cerrado' && p.buzonItemId) {
+    let item = null;
+    try { item = await getBuzonItem(p.buzonItemId); } catch { item = null; }
+    if (item && item.estado && item.estado !== 'recibido') {
+      toast('Contabilidad ya procesó esta nómina; no se puede eliminar.', 'warn');
+      return;
+    }
+  }
+  const ok = await modal({
+    title: 'Eliminar período',
+    body: h('div', {}, [
+      h('p', {}, `¿Eliminar el período de ${tipoPersonalLabel[p.tipo] || p.tipo} (${p.label || p.id})? Esta acción no se puede deshacer.`),
+      p.estado === 'cerrado'
+        ? h('p', { class: 'muted', style: { fontSize: '12px' } }, 'También se quitará su item del buzón de contabilidad.')
+        : null
+    ]),
+    confirmLabel: 'Eliminar', danger: true
+  });
+  if (!ok) return;
+  try {
+    if (p.buzonItemId) { try { await deleteBuzonItem(p.buzonItemId); } catch { /* ignore */ } }
+    await removePeriodo(p.id);
+    toast('Período eliminado', 'ok');
+    onDone();
   } catch (err) { toast('Error: ' + err.message, 'danger'); }
 }
 
@@ -644,13 +680,20 @@ export async function renderPeriodoDetalle({ params }) {
     } catch (err) { toast('Error: ' + err.message, 'danger'); }
   }
 
+  const eliminarBtn = h('button', {
+    class: 'btn danger', onClick: () => eliminarPeriodoFlow({ ...doc, id: periodoId }, () => navigate('/periodos'))
+  }, 'Eliminar período');
   const programado = doc.estado === 'programado';
   const actions = cerrado
     ? h('div', { class: 'row', style: { marginTop: '14px', justifyContent: 'flex-end' } }, [
+        eliminarBtn,
+        h('div', { style: { flex: 1 } }),
         h('button', { class: 'btn ghost', onClick: () => navigate('/periodos') }, 'Volver'),
         h('button', { class: 'btn', onClick: reabrir }, 'Reabrir para editar')
       ])
     : h('div', { class: 'row', style: { marginTop: '14px', justifyContent: 'flex-end' } }, [
+        eliminarBtn,
+        h('div', { style: { flex: 1 } }),
         h('button', { class: 'btn ghost', onClick: () => navigate('/periodos') }, 'Volver'),
         programado
           ? h('button', { class: 'btn ghost', onClick: volverABorrador }, 'Volver a borrador')
