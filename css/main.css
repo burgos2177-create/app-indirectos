@@ -264,3 +264,36 @@ input[disabled], select[disabled], textarea[disabled] { opacity: .55; cursor: no
 .tipo-row .tipo-val b { color: var(--text-0); }
 
 .tbl td.accent { color: var(--accent); font-weight: 600; }
+
+/* ========== períodos: carriles ========== */
+.carril-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-top: 8px; }
+.carril-card {
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px;
+  display: flex; flex-direction: column; gap: 10px; transition: border-color .15s;
+}
+.carril-card:hover { border-color: var(--border-strong); }
+.carril-card .carril-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.carril-card .carril-head h3 { margin: 0; font-size: 15px; color: var(--text-0); text-transform: none; letter-spacing: 0; }
+.carril-meta { display: flex; gap: 18px; flex-wrap: wrap; }
+.carril-meta .cm { display: flex; flex-direction: column; gap: 2px; }
+.carril-meta .cm .cm-label { font-size: 10px; color: var(--text-2); text-transform: uppercase; letter-spacing: .3px; }
+.carril-meta .cm .cm-value { font-family: var(--mono); font-size: 13px; color: var(--text-0); }
+
+/* ========== captura de nómina: inputs compactos en celdas ========== */
+.tbl input.cell {
+  width: 92px; text-align: right; padding: 5px 7px;
+  font-family: var(--mono); font-size: 12px;
+}
+.tbl input.cell.dias { width: 66px; }
+.tbl td.cell-td { padding: 4px 8px; }
+.tbl td.neto { font-family: var(--mono); font-weight: 600; color: var(--accent); text-align: right; }
+.tbl thead th.sep-l, .tbl td.sep-l { border-left: 1px solid var(--border); }
+
+/* ========== banner de solo lectura (período cerrado) ========== */
+.readonly-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 6px;
+  background: rgba(93, 211, 158, .08); border: 1px solid rgba(93, 211, 158, .3);
+  color: var(--text-1); font-size: 13px; margin-bottom: 14px;
+}

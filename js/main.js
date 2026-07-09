@@ -8,10 +8,10 @@ import { renderEmpleados } from './views/empleados.js';
 import { renderEmpleadoEditor } from './views/empleado.js';
 import { renderProyeccionList } from './views/proyeccion.js';
 import { renderEscenarioEditor } from './views/escenario.js';
-import {
-  renderPeriodosStub, renderPeriodoStub,
-  renderGastosStub, renderCategoriasStub, renderConfiguracionStub
-} from './views/stubs.js';
+import { renderPeriodos, renderPeriodoDetalle } from './views/periodos.js';
+import { renderGastos } from './views/gastos.js';
+import { renderCategorias } from './views/categorias.js';
+import { renderConfiguracion } from './views/configuracion.js';
 import { h, mount } from './util/dom.js';
 
 route('/',                       () => renderHome());
@@ -20,11 +20,11 @@ route('/empleados',              (ctx) => renderEmpleados(ctx));
 route('/empleados/:id',          (ctx) => renderEmpleadoEditor(ctx));
 route('/proyeccion',             () => renderProyeccionList());
 route('/proyeccion/:id',         (ctx) => renderEscenarioEditor(ctx));
-route('/periodos',               () => renderPeriodosStub());
-route('/periodos/:id',           ({ params }) => renderPeriodoStub(params));
-route('/gastos',                 () => renderGastosStub());
-route('/categorias',             () => renderCategoriasStub());
-route('/configuracion',          () => renderConfiguracionStub());
+route('/periodos',               () => renderPeriodos());
+route('/periodos/:id',           (ctx) => renderPeriodoDetalle(ctx));
+route('/gastos',                 () => renderGastos());
+route('/categorias',             () => renderCategorias());
+route('/configuracion',          () => renderConfiguracion());
 
 let started = false;
 

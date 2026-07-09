@@ -60,12 +60,22 @@ Bitácora aprueba en `js/views/buzon.js` y genera el movimiento contable:
 - Gasto según `modo`.
 
 ## Estado actual
-- **Fase 1 — Scaffold** ✓ login, home, admin, navegación, plumbing RTDB, calendario util. Stubs para empleados/períodos/gastos/categorías/configuración.
-- **Fase 2 — Catálogo de empleados** ⏳ CRUD, asignación multi-obra con pesos, validación 100%.
-- **Fase 3 — Períodos de nómina** ⏳ vista por tipo, captura de días/extras/bonos/deducciones, cierre y publicación al buzón.
-- **Fase 4 — Gastos indirectos** ⏳ captura con 3 modos, selector conceptoKey, publicación al buzón.
-- **Fase 5 — Admin extra** ⏳ CRUD categorías, configuración calendario.
-- **Fase 6 — Cerrar ciclo en bitácora** ⏳ pendiente (`_aprobarNomina*` y `_aprobarGastoIndirecto` en `appsogrub/js/views/buzon.js`).
+- **Fase 1 — Scaffold** ✓ login, home, admin, navegación, plumbing RTDB, calendario util.
+- **Fase 2 — Catálogo de empleados** ✓ CRUD, asignación multi-obra con pesos, validación 100%.
+- **Fase 3 — Períodos de nómina** ✓ 4 carriles (operativo semanal + 3 quincenales), "Armar período actual" con prellenado del catálogo, captura editable de días/horas extra/bonos/prestaciones/deducciones con neto en vivo, cierre con publicación al buzón (prorrateo del neto por obra) y reapertura mientras contabilidad no lo procese.
+- **Fase 4 — Gastos indirectos** ✓ captura con los 3 modos (obra única / prorrateo / empresa), subtotal+IVA+importe, categoría, conceptoKey y proveedor opcionales, publicación al buzón (prorrateo → N movimientos).
+- **Fase 5 — Admin extra** ✓ CRUD de categorías (con semillas) y configuración del calendario semanal.
+- **Fase 6 — Cerrar ciclo en bitácora** ⏳ pendiente del lado de bitácora (`_aprobarNomina*` y `_aprobarGastoIndirecto` en `appsogrub/js/views/buzon.js`).
+
+### Contrato del buzón (contabilidad)
+Cada item publicado en `/shared/buzon/{id}` sigue el envelope que consume bitácora:
+```
+{ tipo, origenApp:"indirectos", obraId?, concepto,
+  monto:{ subtotal, iva, importe }, fecha:"YYYY-MM-DD",
+  estado:"recibido", creadoPor, creadoAt,
+  proveedorNombre?, conceptoKey? }
+```
+Gasto obra única → 1 item; prorrateo → N items (uno por obra con su porción); empresa → item sin `obraId` (`empresa:true`). La nómina reutiliza el mismo envelope (`monto.importe` = neto total, sin IVA) y agrega el desglose por empleado y `prorrateoPorObra`.
 
 ## Documentación de decisiones
 Ver memoria del proyecto en
