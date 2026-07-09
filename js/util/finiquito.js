@@ -35,10 +35,19 @@ export function salarioDiarioDe(tipo, sueldoBase) {
 }
 
 export function calcularFiniquito(empleado, hasta = Date.now()) {
-  const sd = salarioDiarioDe(empleado.tipo, empleado.sueldoBase);
   const alta = Number(empleado.fechaAlta) || Number(empleado.createdAt) || hasta;
   const diasAntig = Math.max(0, Math.floor((hasta - alta) / DIA_MS));
   const anios = diasAntig / 365;
+  const diasVac = diasVacaciones(anios);
+
+  // === Salario diario (SD) y SDI ===
+  // Factor de integración = 1 + días de aguinaldo/365 + (días vacaciones × prima)/365.
+  const factorIntegracion = 1 + (DIAS_AGUINALDO / 365) + (diasVac * PRIMA_VACACIONAL / 365);
+  // Si el empleado tiene un SDI registrado, se usa TAL CUAL y de él se deriva el
+  // salario diario. Si no, el SDI se estima integrando el sueldo base.
+  const sdiManual = Number(empleado.sdi) > 0;
+  const sdi = sdiManual ? Number(empleado.sdi) : salarioDiarioDe(empleado.tipo, empleado.sueldoBase) * factorIntegracion;
+  const sd = sdi / factorIntegracion;
 
   // === Proporcionales del finiquito (con SALARIO DIARIO) ===
   // Aguinaldo proporcional: 15 días × (días trabajados del año calendario / 365).
@@ -53,16 +62,10 @@ export function calcularFiniquito(empleado, hasta = Date.now()) {
   const inicioAnioAniv = alta + aniosCompletos * 365 * DIA_MS;
   const diasEnAnioAniv = Math.max(0, Math.min(365, Math.floor((hasta - inicioAnioAniv) / DIA_MS)));
   const fracAniv = diasEnAnioAniv / 365;
-  const diasVac = diasVacaciones(anios);
   const vacaciones = diasVac * fracAniv * sd;
   const primaVacacional = vacaciones * PRIMA_VACACIONAL;
 
   const totalFiniquito = aguinaldo + vacaciones + primaVacacional;
-
-  // === Salario Diario Integrado (SDI) ===
-  // Factor de integración = 1 + días de aguinaldo/365 + (días vacaciones × prima)/365.
-  const factorIntegracion = 1 + (DIAS_AGUINALDO / 365) + (diasVac * PRIMA_VACACIONAL / 365);
-  const sdi = sd * factorIntegracion;
 
   // === Componentes de LIQUIDACIÓN (despido injustificado) con SDI ===
   const indemnizacion90 = 90 * sdi;                 // 3 meses constitucionales
@@ -73,7 +76,7 @@ export function calcularFiniquito(empleado, hasta = Date.now()) {
 
   return {
     salarioDiario: sd,
-    factorIntegracion, sdi,
+    factorIntegracion, sdi, sdiManual,
     salarioMinimo: SALARIO_MINIMO_DIARIO, salarioTopado,
     diasAntiguedad: diasAntig, anios,
     // finiquito (voluntario, con SD)

@@ -98,6 +98,10 @@ export async function renderEmpleadoEditor({ params }) {
     value: draft.bonos || 0, placeholder: '0.00',
     onInput: () => updateMensualHint()
   });
+  refs.sdi = h('input', {
+    type: 'number', step: '0.01', min: '0',
+    value: draft.sdi || 0, placeholder: '0.00'
+  });
   const sueldoLabelText = () => `Sueldo base (${periodicidadDeTipo(draft.tipo) === 'semanal' ? 'por semana' : 'por quincena'})`;
   refs.sueldoLabel = h('label', {}, sueldoLabelText());
   refs.mensualHint = h('span', { class: 'muted', style: { fontSize: '12px' } }, '');
@@ -313,6 +317,7 @@ export async function renderEmpleadoEditor({ params }) {
       tipo: refs.tipo.value,
       sueldoBase,
       bonos: Number(refs.bonos.value) || 0,
+      sdi: Number(refs.sdi.value) || 0,
       telefono: refs.telefono.value.trim() || null,
       email: refs.email.value.trim() || null,
       direccion: refs.direccion.value.trim() || null,
@@ -397,6 +402,15 @@ export async function renderEmpleadoEditor({ params }) {
         h('div', { class: 'field' }, [h('label', {}, 'Bono por rendimiento (por período)'), refs.bonos])
       ]),
       h('div', { style: { marginTop: '6px' } }, refs.mensualHint),
+      h('div', { class: 'grid-2', style: { marginTop: '10px' } }, [
+        h('div', { class: 'field' }, [
+          h('label', {}, 'SDI registrado (IMSS)'),
+          refs.sdi,
+          h('span', { class: 'muted', style: { fontSize: '11px' } },
+            'Base del cálculo de finiquito/liquidación. Déjalo en 0 para estimarlo del sueldo base.')
+        ]),
+        h('div', {})
+      ]),
       h('div', { class: 'grid-3', style: { marginTop: '10px' } }, [
         h('div', { class: 'field' }, [h('label', {}, 'RFC'), refs.rfc]),
         h('div', { class: 'field' }, [h('label', {}, 'CURP'), refs.curp]),
@@ -477,6 +491,7 @@ function emptyEmpleado() {
     tipo: 'operativo',
     sueldoBase: 0,
     bonos: 0,
+    sdi: 0,
     telefono: '',
     email: '',
     direccion: '',
@@ -525,9 +540,10 @@ function cotizacionCard(empleadoId, empleado, periodos) {
 
     h('h4', { style: subTitle }, 'Salario diario y SDI'),
     h('div', { class: 'tipo-breakdown' }, [
-      finRow('Salario diario (SD)', money(fin.salarioDiario)),
+      finRow(fin.sdiManual ? 'SDI registrado (IMSS)' : 'SDI estimado (del sueldo base)',
+        h('span', {}, [money(fin.sdi), ' ', h('span', { class: 'tag ' + (fin.sdiManual ? 'ok' : 'muted') }, fin.sdiManual ? 'registrado' : 'estimado')])),
       finRow('Factor de integración', num(fin.factorIntegracion, 4)),
-      finRow('Salario diario integrado (SDI)', money(fin.sdi))
+      finRow('Salario diario (SD = SDI ÷ factor)', money(fin.salarioDiario))
     ]),
 
     h('h4', { style: subTitle }, 'Finiquito — separación voluntaria (con SD)'),
