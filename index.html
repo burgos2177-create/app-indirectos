@@ -10,6 +10,15 @@
   <div id="app"></div>
   <div id="modal-root"></div>
   <div id="toast-root"></div>
+  <script>
+    // Service worker: fuerza que los módulos/estilos se pidan siempre a la red,
+    // para que cada despliegue se vea sin hard-refresh. Ver sw.js.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
+      });
+    }
+  </script>
   <script type="module">
     const v = Date.now();
     import('./js/main.js?v=' + v);
