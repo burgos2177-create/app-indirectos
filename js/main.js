@@ -10,6 +10,7 @@ import { renderProyeccionList } from './views/proyeccion.js';
 import { renderEscenarioEditor } from './views/escenario.js';
 import { renderPeriodos, renderPeriodoDetalle } from './views/periodos.js';
 import { renderGastos } from './views/gastos.js';
+import { renderCargaSocial } from './views/cargasocial.js';
 import { renderCategorias } from './views/categorias.js';
 import { renderConfiguracion } from './views/configuracion.js';
 import { h, mount } from './util/dom.js';
@@ -23,6 +24,7 @@ route('/proyeccion/:id',         (ctx) => renderEscenarioEditor(ctx));
 route('/periodos',               () => renderPeriodos());
 route('/periodos/:id',           (ctx) => renderPeriodoDetalle(ctx));
 route('/gastos',                 () => renderGastos());
+route('/carga-social',           () => renderCargaSocial());
 route('/categorias',             () => renderCategorias());
 route('/configuracion',          () => renderConfiguracion());
 
