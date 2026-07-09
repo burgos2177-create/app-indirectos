@@ -90,6 +90,104 @@ function mismoMes(ms, ref) {
   return d.getMonth() === ref.getMonth() && d.getFullYear() === ref.getFullYear();
 }
 
+// Cierra un período y publica su nómina al buzón (contrato de contabilidad +
+// campos de nómina). Reutilizable desde el botón "Cerrar y enviar" y desde el
+// auto-envío por vencimiento. Devuelve { buzonItemId, totalNeto }.
+async function publicarPeriodo(periodoId, doc, empMap) {
+  const diasLab = Number(doc.diasLaborables) || 0;
+  const rows = Object.entries(empMap || {}).map(([empleadoId, e]) => ({ empleadoId, ...e }));
+
+  let totalPercep = 0, totalDed = 0, totalNeto = 0, netoSinObra = 0;
+  const prorrateoPorObra = {};
+  const empSnapshot = {};
+  for (const r of rows) {
+    const c = calc(r, diasLab);
+    totalPercep += c.percepciones; totalDed += c.dedTotal; totalNeto += c.neto;
+    empSnapshot[r.empleadoId] = {
+      nombre: r.nombre, tipo: r.tipo, sueldoBase: Number(r.sueldoBase) || 0,
+      diasTrabajados: Number(r.diasTrabajados) || 0, horasExtra: Number(r.horasExtra) || 0,
+      bonos: Number(r.bonos) || 0, prestaciones: Number(r.prestaciones) || 0,
+      deducciones: { ...(r.deducciones || {}) }, obrasAsignadas: r.obrasAsignadas || {},
+      percepciones: round2(c.percepciones), deduccionesTotal: round2(c.dedTotal), neto: round2(c.neto)
+    };
+    const oa = r.obrasAsignadas || {};
+    const ids = Object.keys(oa);
+    if (ids.length === 0) { netoSinObra += c.neto; continue; }
+    const sp = ids.reduce((s, id) => s + (Number(oa[id]?.peso) || 0), 0);
+    for (const id of ids) {
+      const peso = Number(oa[id]?.peso) || 0;
+      const frac = sp > 0 ? peso / sp : 1 / ids.length;
+      prorrateoPorObra[id] = (prorrateoPorObra[id] || 0) + c.neto * frac;
+    }
+  }
+  for (const id of Object.keys(prorrateoPorObra)) prorrateoPorObra[id] = round2(prorrateoPorObra[id]);
+
+  const item = {
+    tipo: BUZON_TIPO[doc.tipo] || 'nomina_individual',
+    origenApp: 'indirectos', estado: 'recibido', creadoPor: state.user?.uid || null,
+    concepto: `Nómina ${tipoPersonalLabel[doc.tipo]} · ${doc.label}`,
+    fecha: doc.fechaCorteISO,
+    monto: { subtotal: round2(totalNeto), iva: 0, importe: round2(totalNeto) },
+    periodoId, tipoPersonal: doc.tipo, periodicidad: doc.periodicidad,
+    fechaInicioISO: doc.fechaInicioISO, fechaCorteISO: doc.fechaCorteISO, label: doc.label,
+    totalPercepciones: round2(totalPercep), totalDeducciones: round2(totalDed), totalNeto: round2(totalNeto),
+    numEmpleados: rows.length, prorrateoPorObra, netoSinObra: round2(netoSinObra),
+    empleados: Object.entries(empSnapshot).map(([empleadoId, e]) => ({
+      empleadoId, nombre: e.nombre, neto: e.neto, obrasAsignadas: e.obrasAsignadas
+    }))
+  };
+
+  const buzonItemId = await pushBuzonItem(item);
+  await updatePeriodo(periodoId, {
+    empleados: empSnapshot, estado: 'cerrado', buzonItemId,
+    totalNeto: round2(totalNeto), totalPercepciones: round2(totalPercep), totalDeducciones: round2(totalDed),
+    cerradoAt: Date.now()
+  });
+  await Promise.allSettled(rows.map(r => updateEmpleado(r.empleadoId, { ultimasDeducciones: { ...(r.deducciones || {}) } })));
+  return { buzonItemId, totalNeto: round2(totalNeto) };
+}
+
+// Auto-envío: períodos PROGRAMADOS cuya fecha de vencimiento ya llegó y no se
+// cerraron manualmente. Como la app es estática, esto corre al abrir Períodos.
+function avisosProgramacion(periodos, autoEnviados) {
+  const items = [];
+  if (autoEnviados > 0) {
+    items.push(h('div', { class: 'readonly-banner' }, [
+      h('span', { class: 'tag ok' }, 'Auto-envío'),
+      h('span', {}, `${autoEnviados} nómina(s) programada(s) vencida(s) se enviaron automáticamente al buzón al abrir.`)
+    ]));
+  }
+  const prog = Object.entries(periodos || {}).map(([id, p]) => ({ id, ...p }))
+    .filter(p => p.estado === 'programado')
+    .sort((a, b) => vencimientoDe(a) - vencimientoDe(b));
+  if (prog.length > 0) {
+    const prox = prog[0];
+    const vi = vencInfo(vencimientoDe(prox), false);
+    const style = vi.cls === 'danger'
+      ? { background: 'rgba(255,107,107,.08)', borderColor: 'rgba(255,107,107,.35)' }
+      : vi.cls === 'warn'
+        ? { background: 'rgba(245,196,81,.08)', borderColor: 'rgba(245,196,81,.35)' }
+        : {};
+    items.push(h('div', { class: 'readonly-banner', style }, [
+      h('span', { class: 'tag ' + (vi.cls || 'accent') }, `${prog.length} por liquidar`),
+      h('span', {}, `Nómina(s) programada(s) pendiente(s) de enviar. Próxima: ${tipoPersonalLabel[prox.tipo]} · ${vi.txt} (${dateMx(vencimientoDe(prox))}). Se enviará sola al llegar su vencimiento si no la cierras antes.`)
+    ]));
+  }
+  return items.length ? h('div', { style: { marginBottom: '16px' } }, items) : null;
+}
+
+async function autoEnviarVencidos(periodos) {
+  const hoy = startOfDay(Date.now());
+  const vencidos = Object.entries(periodos || {})
+    .map(([id, p]) => ({ id, ...p }))
+    .filter(p => p.estado === 'programado'
+      && vencimientoDe(p) && startOfDay(vencimientoDe(p)) <= hoy
+      && Object.keys(p.empleados || {}).length > 0);
+  if (vencidos.length === 0) return 0;
+  const res = await Promise.allSettled(vencidos.map(p => publicarPeriodo(p.id, p, p.empleados)));
+  return res.filter(r => r.status === 'fulfilled').length;
+}
+
 // ===================== LISTA (carriles + histórico) =====================
 
 export async function renderPeriodos() {
@@ -103,6 +201,17 @@ export async function renderPeriodos() {
     renderShell(crumbs, h('div', { class: 'empty' }, 'Error: ' + err.message));
     return;
   }
+
+  // Auto-envío de nóminas programadas ya vencidas (app estática → corre al abrir).
+  let autoEnviados = 0;
+  try {
+    autoEnviados = await autoEnviarVencidos(periodos);
+    if (autoEnviados > 0) {
+      periodos = await listPeriodos();
+      toast(`${autoEnviados} nómina(s) programada(s) vencida(s) se enviaron al buzón`, 'ok');
+    }
+  } catch { /* no bloquear la vista */ }
+
   const cal = meta.calendarioSemanal;
   const empArr = Object.entries(empleados || {}).map(([id, e]) => ({ id, ...e }));
   const activosAll = empArr.filter(e => e.activo !== false);
@@ -126,6 +235,7 @@ export async function renderPeriodos() {
     h('h1', {}, 'Períodos de nómina'),
     h('p', { class: 'muted', style: { margin: '0 0 16px' } },
       'Cuatro carriles independientes. Arma el período, prográmalo con su fecha de liquidación, captura días/deducciones y ciérralo para enviarlo al buzón.'),
+    avisosProgramacion(periodos, autoEnviados),
     resumenPlantilla(activosAll, periodos),
     h('h2', {}, 'Períodos actuales'),
     cardsWrap,
@@ -565,67 +675,9 @@ export async function renderPeriodoDetalle({ params }) {
     });
     if (!ok) return;
 
-    let totalPercep = 0, totalDed = 0, totalNeto = 0, netoSinObra = 0;
-    const prorrateoPorObra = {};
-    const empSnapshot = {};
-    for (const r of rows) {
-      const c = calc(r, diasLab);
-      totalPercep += c.percepciones; totalDed += c.dedTotal; totalNeto += c.neto;
-      empSnapshot[r.empleadoId] = {
-        nombre: r.nombre, tipo: r.tipo, sueldoBase: r.sueldoBase,
-        diasTrabajados: Number(r.diasTrabajados) || 0,
-        horasExtra: Number(r.horasExtra) || 0,
-        bonos: Number(r.bonos) || 0,
-        prestaciones: Number(r.prestaciones) || 0,
-        deducciones: { ...r.deducciones },
-        obrasAsignadas: r.obrasAsignadas || {},
-        percepciones: round2(c.percepciones),
-        deduccionesTotal: round2(c.dedTotal),
-        neto: round2(c.neto)
-      };
-      const oa = r.obrasAsignadas || {};
-      const ids = Object.keys(oa);
-      if (ids.length === 0) { netoSinObra += c.neto; continue; }
-      const sp = ids.reduce((s, id) => s + (Number(oa[id]?.peso) || 0), 0);
-      for (const id of ids) {
-        const peso = Number(oa[id]?.peso) || 0;
-        const frac = sp > 0 ? peso / sp : 1 / ids.length;
-        prorrateoPorObra[id] = (prorrateoPorObra[id] || 0) + c.neto * frac;
-      }
-    }
-    for (const id of Object.keys(prorrateoPorObra)) prorrateoPorObra[id] = round2(prorrateoPorObra[id]);
-
-    // Envelope compatible con el buzón de contabilidad + campos propios de nómina.
-    // La nómina es neto (sin IVA): subtotal = importe = totalNeto.
-    const item = {
-      tipo: BUZON_TIPO[doc.tipo] || 'nomina_individual',
-      origenApp: 'indirectos',
-      estado: 'recibido',
-      creadoPor: state.user?.uid || null,
-      concepto: `Nómina ${tipoPersonalLabel[doc.tipo]} · ${doc.label}`,
-      fecha: doc.fechaCorteISO,
-      monto: { subtotal: round2(totalNeto), iva: 0, importe: round2(totalNeto) },
-      // --- extendido para nómina (bitácora: 1 movimiento Mifel + N por obra) ---
-      periodoId, tipoPersonal: doc.tipo, periodicidad: doc.periodicidad,
-      fechaInicioISO: doc.fechaInicioISO, fechaCorteISO: doc.fechaCorteISO, label: doc.label,
-      totalPercepciones: round2(totalPercep), totalDeducciones: round2(totalDed), totalNeto: round2(totalNeto),
-      numEmpleados: rows.length,
-      prorrateoPorObra, netoSinObra: round2(netoSinObra),
-      empleados: Object.entries(empSnapshot).map(([empleadoId, e]) => ({
-        empleadoId, nombre: e.nombre, neto: e.neto, obrasAsignadas: e.obrasAsignadas
-      }))
-    };
-
     cerrarBtn.disabled = true; cerrarBtn.innerHTML = '<span class="spinner"></span> Enviando…';
     try {
-      const buzonItemId = await pushBuzonItem(item);
-      await updatePeriodo(periodoId, {
-        empleados: empSnapshot, estado: 'cerrado', buzonItemId,
-        totalNeto: round2(totalNeto), totalPercepciones: round2(totalPercep), totalDeducciones: round2(totalDed),
-        cerradoAt: Date.now()
-      });
-      // Prefill de deducciones para el próximo período (best-effort).
-      await Promise.allSettled(rows.map(r => updateEmpleado(r.empleadoId, { ultimasDeducciones: { ...r.deducciones } })));
+      await publicarPeriodo(periodoId, doc, buildEmpMap());
       toast('Nómina enviada al buzón', 'ok');
       navigate('/periodos');
     } catch (err) {
