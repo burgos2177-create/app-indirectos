@@ -10,6 +10,7 @@ import { navigate } from '../state/router.js';
 import { money, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
 import { periodoActual } from '../util/calendario.js';
 import { calcularProyeccion } from './escenario.js';
+import { clasificacionDe } from '../util/clasificacion.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
 
@@ -124,11 +125,15 @@ async function publicarPeriodo(periodoId, doc, empMap) {
   }
   for (const id of Object.keys(prorrateoPorObra)) prorrateoPorObra[id] = round2(prorrateoPorObra[id]);
 
+  const clasif = clasificacionDe(doc.tipo);
   const item = {
     tipo: BUZON_TIPO[doc.tipo] || 'nomina_individual',
     origenApp: 'indirectos', estado: 'recibido', creadoPor: state.user?.uid || null,
     concepto: `Nómina ${tipoPersonalLabel[doc.tipo]} · ${doc.label}`,
     fecha: doc.fechaCorteISO,
+    // Clasificación contable: operativo = costo directo; técnicos/directivo = indirecto (campo/oficina).
+    clasificacion: clasif.clasificacion,
+    ambito: clasif.ambito,
     monto: { subtotal: round2(totalNeto), iva: 0, importe: round2(totalNeto) },
     periodoId, tipoPersonal: doc.tipo, periodicidad: doc.periodicidad,
     fechaInicioISO: doc.fechaInicioISO, fechaCorteISO: doc.fechaCorteISO, label: doc.label,

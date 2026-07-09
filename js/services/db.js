@@ -272,3 +272,15 @@ export async function updateGasto(gastoId, patch) {
 export async function removeGasto(gastoId) {
   return rremove(`gastos/${gastoId}`);
 }
+
+// === Carga social (registro de envío al buzón por mes) ===
+
+export async function getCargaSocialMes(mes) {
+  return await rread(`carga_social/${mes}`);
+}
+export async function setCargaSocialMes(mes, data) {
+  return rset(`carga_social/${mes}`, data);
+}
+export async function removeCargaSocialMes(mes) {
+  return rremove(`carga_social/${mes}`);
+}

@@ -77,6 +77,17 @@ Cada item publicado en `/shared/buzon/{id}` sigue el envelope que consume bitác
 ```
 Gasto obra única → 1 item; prorrateo → N items (uno por obra con su porción); empresa → item sin `obraId` (`empresa:true`). La nómina reutiliza el mismo envelope (`monto.importe` = neto total, sin IVA) y agrega el desglose por empleado y `prorrateoPorObra`.
 
+**Clasificación contable** (para conciliar presupuesto vs gasto): nóminas y carga
+social incluyen `clasificacion:"directo"|"indirecto"` y `ambito:"campo"|"oficina"|null`
+según el tipo de personal:
+- `operativo` → **directo** (por administración: cuadrilla, rendimiento × jornal en la matriz de PU), `ambito:null`.
+- `tecnico_campo` → indirecto de campo.
+- `tecnico_oficina` / `directivo` → indirecto de oficina.
+
+**Carga social** publica `tipo:"carga_social"` (IMSS mensual + INFONAVIT bimestral),
+un item por bucket de clasificación, con `mes`, `incluyeInfonavit`, `fechaVencimiento`
+(día 17) y `prorrateoPorObra`.
+
 ## Documentación de decisiones
 Ver memoria del proyecto en
 `C:/Users/Fernando/.claude/projects/D--apps-sogrub-app-indirectos/memory/`.
