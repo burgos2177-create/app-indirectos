@@ -9,6 +9,12 @@ import { periodicidadDeTipo } from './format.js';
 
 const DIA_MS = 86400000;
 
+// Salario mínimo general diario (zona general). Se usa para topar la prima de
+// antigüedad (2× mínimo). Ajustar al año en curso.
+export const SALARIO_MINIMO_DIARIO = 278.80;
+const PRIMA_VACACIONAL = 0.25;
+const DIAS_AGUINALDO = 15;
+
 // Días de vacaciones anuales según años cumplidos de antigüedad (LFT 2023).
 export function diasVacaciones(anios) {
   const a = Math.floor(anios);
@@ -34,13 +40,13 @@ export function calcularFiniquito(empleado, hasta = Date.now()) {
   const diasAntig = Math.max(0, Math.floor((hasta - alta) / DIA_MS));
   const anios = diasAntig / 365;
 
+  // === Proporcionales del finiquito (con SALARIO DIARIO) ===
   // Aguinaldo proporcional: 15 días × (días trabajados del año calendario / 365).
   const finDate = new Date(hasta);
   const iniAnioCal = new Date(finDate.getFullYear(), 0, 1).getTime();
   const iniAguinaldo = Math.max(iniAnioCal, alta);
   const diasAnioCal = Math.max(0, Math.floor((hasta - iniAguinaldo) / DIA_MS)) + 1;
-  const diasAguinaldo = 15;
-  const aguinaldo = diasAguinaldo * (Math.min(diasAnioCal, 365) / 365) * sd;
+  const aguinaldo = DIAS_AGUINALDO * (Math.min(diasAnioCal, 365) / 365) * sd;
 
   // Vacaciones proporcionales al año de antigüedad en curso + prima vacacional 25%.
   const aniosCompletos = Math.floor(anios);
@@ -49,15 +55,33 @@ export function calcularFiniquito(empleado, hasta = Date.now()) {
   const fracAniv = diasEnAnioAniv / 365;
   const diasVac = diasVacaciones(anios);
   const vacaciones = diasVac * fracAniv * sd;
-  const primaVacacional = vacaciones * 0.25;
+  const primaVacacional = vacaciones * PRIMA_VACACIONAL;
 
-  const total = aguinaldo + vacaciones + primaVacacional;
+  const totalFiniquito = aguinaldo + vacaciones + primaVacacional;
+
+  // === Salario Diario Integrado (SDI) ===
+  // Factor de integración = 1 + días de aguinaldo/365 + (días vacaciones × prima)/365.
+  const factorIntegracion = 1 + (DIAS_AGUINALDO / 365) + (diasVac * PRIMA_VACACIONAL / 365);
+  const sdi = sd * factorIntegracion;
+
+  // === Componentes de LIQUIDACIÓN (despido injustificado) con SDI ===
+  const indemnizacion90 = 90 * sdi;                 // 3 meses constitucionales
+  const veinteDias = 20 * anios * sdi;              // 20 días por año de servicio
+  const salarioTopado = Math.min(sd, 2 * SALARIO_MINIMO_DIARIO);
+  const primaAntiguedad = 12 * anios * salarioTopado; // 12 días/año, tope 2× mínimo
+  const totalLiquidacion = totalFiniquito + indemnizacion90 + veinteDias + primaAntiguedad;
+
   return {
     salarioDiario: sd,
-    diasAntiguedad: diasAntig,
-    anios,
-    diasAguinaldo, aguinaldo,
+    factorIntegracion, sdi,
+    salarioMinimo: SALARIO_MINIMO_DIARIO, salarioTopado,
+    diasAntiguedad: diasAntig, anios,
+    // finiquito (voluntario, con SD)
+    diasAguinaldo: DIAS_AGUINALDO, aguinaldo,
     diasVacaciones: diasVac, vacaciones, primaVacacional,
-    total
+    totalFiniquito,
+    // liquidación (despido, con SDI)
+    indemnizacion90, veinteDias, primaAntiguedad, totalLiquidacion,
+    total: totalFiniquito
   };
 }

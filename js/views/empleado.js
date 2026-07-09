@@ -6,7 +6,7 @@ import {
   listObrasLegacy, listPeriodos
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
-import { money, num2, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo, uid as randId } from '../util/format.js';
+import { money, num, num2, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo, uid as randId } from '../util/format.js';
 import { TIPOS_DOCUMENTO, esUrlValida } from '../services/documentos.js';
 import { calcularFiniquito } from '../util/finiquito.js';
 
@@ -509,6 +509,7 @@ function cotizacionCard(empleadoId, empleado, periodos) {
     h('div', { class: 'muted' }, label),
     h('div', { class: 'tipo-val' }, h('b', {}, value))
   ]);
+  const subTitle = { margin: '14px 0 8px', fontSize: '12px', color: 'var(--text-1)', textTransform: 'uppercase', letterSpacing: '.5px' };
 
   return h('div', { class: 'card' }, [
     h('h3', {}, 'Antigüedad, cotización y finiquito'),
@@ -522,19 +523,37 @@ function cotizacionCard(empleadoId, empleado, periodos) {
     h('p', { class: 'muted', style: { fontSize: '11px', margin: '8px 0 0' } },
       `Pagado acumulado — base: ${money(cot.base)} · bonos: ${money(cot.bonos)}. (Semanas: operativo +1, quincenal +2 por período cerrado.)`),
 
-    h('h4', { style: { margin: '14px 0 8px', fontSize: '12px', color: 'var(--text-1)', textTransform: 'uppercase', letterSpacing: '.5px' } },
-      'Finiquito estimado a hoy (con sueldo base)'),
+    h('h4', { style: subTitle }, 'Salario diario y SDI'),
     h('div', { class: 'tipo-breakdown' }, [
-      finRow('Salario diario', money(fin.salarioDiario)),
+      finRow('Salario diario (SD)', money(fin.salarioDiario)),
+      finRow('Factor de integración', num(fin.factorIntegracion, 4)),
+      finRow('Salario diario integrado (SDI)', money(fin.sdi))
+    ]),
+
+    h('h4', { style: subTitle }, 'Finiquito — separación voluntaria (con SD)'),
+    h('div', { class: 'tipo-breakdown' }, [
       finRow(`Aguinaldo proporcional (${fin.diasAguinaldo} días)`, money(fin.aguinaldo)),
       finRow(`Vacaciones proporcionales (${fin.diasVacaciones} días/año)`, money(fin.vacaciones)),
       finRow('Prima vacacional (25%)', money(fin.primaVacacional))
     ]),
-    h('div', { class: 'kpi accent', style: { marginTop: '10px', maxWidth: '280px' } }, [
+    h('div', { class: 'kpi accent', style: { marginTop: '10px', maxWidth: '300px' } }, [
       h('span', { class: 'kpi-label' }, 'Finiquito estimado'),
-      h('span', { class: 'kpi-value' }, money(fin.total))
+      h('span', { class: 'kpi-value' }, money(fin.totalFiniquito))
     ]),
-    h('p', { class: 'muted', style: { fontSize: '11px', margin: '8px 0 0' } },
-      'Estimado orientativo (separación voluntaria): aguinaldo 15 días, vacaciones LFT 2023 + prima 25%. Se calcula con el sueldo base; no incluye indemnización ni días pendientes del período en curso.')
+
+    h('h4', { style: subTitle }, 'Liquidación — despido injustificado (con SDI)'),
+    h('div', { class: 'tipo-breakdown' }, [
+      finRow('Indemnización 3 meses (90 días × SDI)', money(fin.indemnizacion90)),
+      finRow('20 días por año (× SDI)', money(fin.veinteDias)),
+      finRow(`Prima de antigüedad (12 días/año, tope 2× mínimo)`, money(fin.primaAntiguedad)),
+      finRow('+ Finiquito (proporcionales)', money(fin.totalFiniquito))
+    ]),
+    h('div', { class: 'kpi accent', style: { marginTop: '10px', maxWidth: '300px' } }, [
+      h('span', { class: 'kpi-label' }, 'Liquidación total estimada'),
+      h('span', { class: 'kpi-value' }, money(fin.totalLiquidacion))
+    ]),
+
+    h('p', { class: 'muted', style: { fontSize: '11px', margin: '10px 0 0' } },
+      `Estimado orientativo con el sueldo base. Aguinaldo 15 días y vacaciones (LFT 2023) con SD; indemnización y prima de antigüedad con SDI (factor de integración). Prima de antigüedad topada a 2× salario mínimo (${money(fin.salarioMinimo)}/día). No incluye días pendientes del período en curso.`)
   ]);
 }
