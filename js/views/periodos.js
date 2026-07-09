@@ -187,6 +187,8 @@ function carrilCard(c) {
       ? h('button', { class: 'btn sm', disabled: true }, 'Sin personal activo')
       : h('button', { class: 'btn primary sm', onClick: () => armarPeriodo(tipo) }, '+ Armar período actual');
 
+  const desincronizado = doc && doc.proyectadoBruto != null && Math.abs(Number(doc.proyectadoBruto) - proyectado) > 0.01;
+
   return h('div', { class: 'carril-card' }, [
     h('div', { class: 'carril-head' }, [
       h('h3', {}, tipoPersonalLabel[tipo]),
@@ -202,7 +204,16 @@ function carrilCard(c) {
       cm('Proyectado', money(proyectado)),
       doc ? cm('Neto capturado', money(totalNeto)) : null
     ]),
-    h('div', { class: 'row' }, [accion])
+    desincronizado
+      ? h('div', { class: 'muted', style: { fontSize: '11px', color: 'var(--warn)' } },
+          `El catálogo cambió (proyectado ${money(proyectado)} vs armado ${money(doc.proyectadoBruto)}). Actualiza para reflejar los nuevos salarios.`)
+      : null,
+    h('div', { class: 'row' }, [
+      accion,
+      doc && doc.estado !== 'cerrado'
+        ? h('button', { class: 'btn ghost sm', title: 'Actualizar sueldos desde el catálogo', onClick: () => regenerarQuick(per.periodoId) }, '↻ Salarios')
+        : null
+    ])
   ]);
 }
 
@@ -297,6 +308,62 @@ async function armarPeriodo(tipo) {
   } catch (err) {
     toast('Error: ' + err.message, 'danger');
   }
+}
+
+// Re-sincroniza un período (borrador/programado) con el catálogo actual:
+// actualiza sueldos base y ajusta la lista al personal activo, CONSERVANDO
+// los días/horas/bonos/deducciones ya capturados por empleado.
+async function regenerarPeriodo(periodoId) {
+  const doc = await getPeriodo(periodoId);
+  if (!doc || doc.estado === 'cerrado') return false;
+  const empleados = await listEmpleados();
+  const activos = Object.entries(empleados || {}).filter(([, e]) => e.tipo === doc.tipo && e.activo !== false);
+  const prev = doc.empleados || {};
+  const empMap = {};
+  let proyectadoBruto = 0;
+  for (const [id, e] of activos) {
+    const base = Number(e.sueldoBase) || 0;
+    proyectadoBruto += base;
+    const p = prev[id];
+    if (p) {
+      // Conserva la captura; actualiza los datos que vienen del catálogo.
+      empMap[id] = { ...p, nombre: e.nombre || p.nombre, sueldoBase: base, obrasAsignadas: e.obrasAsignadas || {} };
+    } else {
+      const ud = e.ultimasDeducciones || {};
+      empMap[id] = {
+        nombre: e.nombre || '(sin nombre)', tipo: e.tipo, sueldoBase: base,
+        diasTrabajados: doc.diasLaborables, horasExtra: 0, bonos: 0, prestaciones: 0,
+        deducciones: {
+          isr: Number(ud.isr) || 0, imss: Number(ud.imss) || 0,
+          infonavit: Number(ud.infonavit) || 0, prestamos: Number(ud.prestamos) || 0
+        },
+        obrasAsignadas: e.obrasAsignadas || {}
+      };
+    }
+  }
+  await updatePeriodo(periodoId, { empleados: empMap, proyectadoBruto: round2(proyectadoBruto) });
+  return true;
+}
+
+async function confirmarRegenerar() {
+  return modal({
+    title: 'Actualizar desde catálogo',
+    body: h('div', {}, [
+      h('p', {}, 'Se actualizan los sueldos base al valor actual del catálogo de empleados y se ajusta la lista al personal activo.'),
+      h('p', { class: 'muted', style: { fontSize: '12px' } },
+        'Se conservan los días, horas extra, bonos y deducciones que ya hayas capturado. No aplica a períodos cerrados.')
+    ]),
+    confirmLabel: 'Actualizar'
+  });
+}
+
+async function regenerarQuick(periodoId) {
+  if (!await confirmarRegenerar()) return;
+  try {
+    await regenerarPeriodo(periodoId);
+    toast('Período actualizado con los nuevos salarios', 'ok');
+    renderPeriodos();
+  } catch (err) { toast('Error: ' + err.message, 'danger'); }
 }
 
 // ===================== DETALLE (captura / cierre) =====================
@@ -568,6 +635,14 @@ export async function renderPeriodoDetalle({ params }) {
       renderPeriodoDetalle({ params });
     } catch (err) { toast('Error: ' + err.message, 'danger'); }
   }
+  async function actualizarSalarios() {
+    if (!await confirmarRegenerar()) return;
+    try {
+      await regenerarPeriodo(periodoId);
+      toast('Salarios actualizados desde el catálogo', 'ok');
+      renderPeriodoDetalle({ params });
+    } catch (err) { toast('Error: ' + err.message, 'danger'); }
+  }
 
   const programado = doc.estado === 'programado';
   const actions = cerrado
@@ -603,7 +678,14 @@ export async function renderPeriodoDetalle({ params }) {
           h('span', {}, `Enviado al buzón (${doc.buzonItemId || '—'}). Neto total ${money(doc.totalNeto != null ? doc.totalNeto : sumaNeto(doc))}. Solo lectura.`)
         ])
       : null,
-    h('div', { class: 'card' }, [h('h3', {}, 'Resumen'), kpiRow]),
+    h('div', { class: 'card' }, [
+      h('div', { class: 'row' }, [
+        h('h3', { style: { margin: 0 } }, 'Resumen'),
+        h('div', { style: { flex: 1 } }),
+        cerrado ? null : h('button', { class: 'btn ghost sm', onClick: actualizarSalarios }, '↻ Actualizar salarios')
+      ]),
+      h('div', { style: { marginTop: '12px' } }, kpiRow)
+    ]),
     h('div', { style: { marginTop: '14px' } }, tableCard),
     actions
   ]));
