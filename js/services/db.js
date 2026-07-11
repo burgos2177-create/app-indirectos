@@ -284,3 +284,54 @@ export async function setCargaSocialMes(mes, data) {
 export async function removeCargaSocialMes(mes) {
   return rremove(`carga_social/${mes}`);
 }
+
+// === Caja chica (fondo físico POR OBRA, en rutas compartidas) ===
+// UN solo fondo por obra: materiales e indirectos reportan al mismo
+// /shared/cajaChica/{obraId}. El saldo es compartido. Estados los maneja el
+// contador en bitácora; indirectos solo escribe 'reportado' y refleja.
+
+export async function getCajaChica(obraId) {
+  return await rread(`/shared/cajaChica/${obraId}`);
+}
+export function watchCajaChica(obraId, cb) {
+  return rwatch(`/shared/cajaChica/${obraId}`, cb);
+}
+export async function setCajaChicaMeta(obraId, patch) {
+  return rupdate(`/shared/cajaChica/${obraId}/meta`, { ...patch, updatedAt: Date.now() });
+}
+
+// Reporta un gasto pagado con caja chica: escribe ATÓMICAMENTE (multi-path update
+// en la raíz) el movimiento y su item de buzón, cruzados por id.
+export async function reportarGastoCajaChica(obraId, movBase, itemBase) {
+  const movId = push(_ref(`/shared/cajaChica/${obraId}/movimientos`)).key;
+  const itemId = push(_ref('/shared/buzon')).key;
+  const updates = {
+    [`/shared/cajaChica/${obraId}/movimientos/${movId}`]: { ...movBase, buzonItemId: itemId },
+    [`/shared/buzon/${itemId}`]: { ...itemBase, movimientoId: movId }
+  };
+  await update(ref(db), updates);
+  return { movId, itemId };
+}
+
+// Depósito a caja chica. Si es transferencia, también publica item de buzón.
+export async function depositarCajaChica(obraId, movBase, itemBase) {
+  const movId = push(_ref(`/shared/cajaChica/${obraId}/movimientos`)).key;
+  const mov = { ...movBase };
+  const updates = {};
+  let itemId = null;
+  if (itemBase) {
+    itemId = push(_ref('/shared/buzon')).key;
+    mov.buzonItemId = itemId;
+    updates[`/shared/buzon/${itemId}`] = { ...itemBase, movimientoId: movId };
+  }
+  updates[`/shared/cajaChica/${obraId}/movimientos/${movId}`] = mov;
+  await update(ref(db), updates);
+  return { movId, itemId };
+}
+
+// Borra un movimiento (y su item de buzón) — solo debe usarse si NO está aprobado.
+export async function borrarMovimientoCajaChica(obraId, movId, buzonItemId) {
+  const updates = { [`/shared/cajaChica/${obraId}/movimientos/${movId}`]: null };
+  if (buzonItemId) updates[`/shared/buzon/${buzonItemId}`] = null;
+  await update(ref(db), updates);
+}

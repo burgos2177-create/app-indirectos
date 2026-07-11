@@ -15,6 +15,7 @@ export function renderHome() {
     card('📅', 'Períodos de nómina', '4 carriles: operativo (semanal) + 3 quincenales. Captura días, deducciones, neto.', '/periodos'),
     card('💸', 'Gastos indirectos', 'Captura suelta: oficina, gasolina, etc. Atribución a obra única, prorrateo, o empresa.', '/gastos'),
     card('🧾', 'Carga social', 'Cuotas obrero-patronal IMSS (mensual) e INFONAVIT (bimestral) por empleado y mes.', '/carga-social'),
+    card('💵', 'Caja chica', 'Reporta gastos pagados con la caja chica de la obra. Fondo compartido; el contador aprueba.', '/caja-chica'),
     isAdmin && card('🏷️', 'Categorías', 'Catálogo editable de categorías de gasto.', '/categorias', 'Admin'),
     isAdmin && card('🗓️', 'Calendario semanal', 'Configura el día de inicio/corte de la nómina de operativos.', '/configuracion', 'Admin'),
     isAdmin && card('⚙️', 'Usuarios', 'Crear aux_admin, asignar obras, gestionar roles.', '/admin', 'Admin')

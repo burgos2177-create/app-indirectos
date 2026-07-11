@@ -88,6 +88,16 @@ según el tipo de personal:
 un item por bucket de clasificación, con `mes`, `incluyeInfonavit`, `fechaVencimiento`
 (día 17) y `prorrateoPorObra`.
 
+### Caja chica (fondo físico por obra)
+Fondo compartido por obra en rutas absolutas `/shared/cajaChica/{obraId}` (materiales
+e indirectos reportan al mismo fondo; distinguir con `origen:"indirectos"`). Reportar
+un gasto escribe ATÓMICAMENTE (multi-path update en la raíz) dos nodos cruzados: el
+movimiento `{tipo:"gasto", estado:"reportado", buzonItemId}` y el item de buzón
+`{tipo:"gasto_caja_chica", movimientoId, monto (bruto), incluyeIva, categoriaSugerida,
+ambitoSugerido, proyectoId?}`. El ciclo de estados (reportado→aprobado/rechazado) lo
+maneja el contador en bitácora; indirectos solo escribe `reportado` y refleja. Saldo =
+depósitos (transferencia) − gastos aprobados. Depósito opcional (`deposito_caja_chica`).
+
 ## Documentación de decisiones
 Ver memoria del proyecto en
 `C:/Users/Fernando/.claude/projects/D--apps-sogrub-app-indirectos/memory/`.
