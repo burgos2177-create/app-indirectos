@@ -308,3 +308,60 @@ input[disabled], select[disabled], textarea[disabled] { opacity: .55; cursor: no
   background: rgba(93, 211, 158, .08); border: 1px solid rgba(93, 211, 158, .3);
   color: var(--text-1); font-size: 13px; margin-bottom: 14px;
 }
+
+/* ========================================================================
+   RESPONSIVE / MÓVIL
+   Solo aplica bajo el breakpoint. NO altera el layout de escritorio: todas
+   las reglas viven dentro de media queries.
+   ======================================================================== */
+
+/* Tablets: grid de 4 → 2 columnas */
+@media (max-width: 960px) {
+  .grid-4 { grid-template-columns: 1fr 1fr; }
+}
+
+/* Teléfonos */
+@media (max-width: 720px) {
+  .page { padding: 14px; }
+  .page h1 { font-size: 19px; }
+  .page h2 { font-size: 15px; margin: 18px 0 10px; }
+
+  /* grids a una sola columna */
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .home-grid, .carril-grid, .escenarios-grid { grid-template-columns: 1fr; }
+
+  /* KPIs a 2 columnas */
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+
+  /* topbar: crumbs a su propia línea; userchip a la derecha */
+  .topbar { flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
+  .topbar .spacer { display: none; }
+  .topbar .userchip { margin-left: auto; padding: 3px 8px; font-size: 11px; }
+  .topbar .userchip > span:first-child {
+    max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .topbar .crumbs { order: 5; flex-basis: 100%; font-size: 12px; }
+
+  /* tablas anchas: scroll horizontal dentro de su tarjeta */
+  .card { overflow-x: auto; }
+  .tbl th, .tbl td { padding: 6px 8px; }
+
+  /* modales casi a pantalla completa */
+  .modal, .modal.lg, .modal.xl, .modal.full { width: 96vw; padding: 16px; }
+  .modal .actions { flex-wrap: wrap; }
+
+  /* login */
+  .login-card { width: 100%; max-width: 360px; padding: 22px; }
+
+  /* desglose por tipo: apilar en móvil */
+  .tipo-row { grid-template-columns: 1fr; gap: 4px; }
+  .tipo-row .tipo-val { text-align: left; }
+
+  /* filas de acciones que no desborden */
+  .row { gap: 6px; }
+}
+
+/* Pantallas muy angostas: KPIs a 1 columna */
+@media (max-width: 420px) {
+  .kpi-row { grid-template-columns: 1fr; }
+}
