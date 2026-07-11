@@ -102,6 +102,8 @@ export async function renderCajaChica({ query } = {}) {
         ])
       ]);
 
+  const obraNombre = obras[obraId]?.meta?.nombre || obraId.slice(0, 6);
+
   const head = h('div', { class: 'row', style: { marginBottom: '8px' } }, [
     h('h1', { style: { margin: 0 } }, 'Caja chica'),
     h('div', { style: { flex: 1 } }),
@@ -112,13 +114,19 @@ export async function renderCajaChica({ query } = {}) {
   renderShell(crumbs, h('div', {}, [
     head,
     h('p', { class: 'muted', style: { margin: '0 0 12px' } },
-      'Fondo físico de la obra (compartido con materiales). Reporta aquí los gastos pagados en efectivo; el contador los aprueba en bitácora. El saldo baja cuando el gasto queda aprobado.'),
-    h('div', { class: 'row', style: { marginBottom: '14px', maxWidth: '380px' } }, [field('Obra', obraSel)]),
+      'Cada obra tiene su propia caja chica (fondo separado). Para una misma obra, el fondo es compartido con materiales (mismo saldo). Reporta aquí los gastos pagados en efectivo; el contador los aprueba en bitácora y el saldo baja cuando quedan aprobados.'),
+    h('div', { class: 'row', style: { marginBottom: '14px', maxWidth: '380px' } }, [field('Obra (caja separada)', obraSel)]),
     saldoBajo ? h('div', { class: 'readonly-banner', style: { background: 'rgba(255,107,107,.08)', borderColor: 'rgba(255,107,107,.35)' } }, [
       h('span', { class: 'tag danger' }, 'Saldo bajo'),
-      h('span', {}, `El saldo (${money(s.saldo)}) está por debajo del umbral de alerta (${money(umbral)}).`)
+      h('span', {}, `El saldo de ${obraNombre} (${money(s.saldo)}) está por debajo del umbral de alerta (${money(umbral)}).`)
     ]) : null,
-    h('div', { class: 'card' }, [h('h3', {}, 'Saldo'), kpiRow]),
+    h('div', { class: 'card' }, [
+      h('div', { class: 'row', style: { marginBottom: '4px' } }, [
+        h('h3', { style: { margin: 0 } }, 'Saldo'),
+        h('span', { class: 'tag accent', style: { marginLeft: '8px' } }, obraNombre)
+      ]),
+      kpiRow
+    ]),
     h('div', { style: { marginTop: '14px' } }, tabla)
   ]));
 }
