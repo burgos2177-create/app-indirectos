@@ -8,7 +8,7 @@ import {
   getProyectoIdByObraId
 } from '../services/db.js';
 import { money, num0, dateMx, tipoPersonalLabel } from '../util/format.js';
-import { clasificacionDe, atribuyeAObra } from '../util/clasificacion.js';
+import { clasificacionDe } from '../util/clasificacion.js';
 
 // IMSS: cuota mensual (todos los meses).
 // INFONAVIT (+ RCV): bimestral → se cubre en los meses pares (feb, abr, …),
@@ -159,8 +159,8 @@ export async function renderCargaSocial() {
       const b = buckets[key];
       b.importe += monto;
       b.empleados.push({ empleadoId: r.id, nombre: r.nombre, imss, infonavit: info });
-      // prorrateo a obras según asignación (solo directo/campo; oficina → Empresa)
-      const oa = atribuyeAObra(r.tipo) ? ((empById[r.id] || {}).obrasAsignadas || {}) : {};
+      // prorrateo a obras según la asignación del empleado (una obra o varias)
+      const oa = (empById[r.id] || {}).obrasAsignadas || {};
       const ids = Object.keys(oa);
       if (ids.length === 0) { b.sinObra += monto; }
       else {

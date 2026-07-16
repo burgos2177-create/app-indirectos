@@ -10,7 +10,7 @@ import { navigate } from '../state/router.js';
 import { money, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
 import { periodoActual } from '../util/calendario.js';
 import { calcularProyeccion } from './escenario.js';
-import { clasificacionDe, atribuyeAObra } from '../util/clasificacion.js';
+import { clasificacionDe } from '../util/clasificacion.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
 
@@ -97,7 +97,6 @@ function mismoMes(ms, ref) {
 async function publicarPeriodo(periodoId, doc, empMap) {
   const diasLab = Number(doc.diasLaborables) || 0;
   const rows = Object.entries(empMap || {}).map(([empleadoId, e]) => ({ empleadoId, ...e }));
-  const aObra = atribuyeAObra(doc.tipo); // oficina → Empresa (sin prorrateo a obra)
 
   let totalPercep = 0, totalDed = 0, totalNeto = 0, netoSinObra = 0;
   const prorrateoPorObra = {};
@@ -116,7 +115,7 @@ async function publicarPeriodo(periodoId, doc, empMap) {
     };
     const oa = r.obrasAsignadas || {};
     const ids = Object.keys(oa);
-    if (!aObra || ids.length === 0) { netoSinObra += c.neto; continue; }
+    if (ids.length === 0) { netoSinObra += c.neto; continue; }
     const sp = ids.reduce((s, id) => s + (Number(oa[id]?.peso) || 0), 0);
     for (const id of ids) {
       const peso = Number(oa[id]?.peso) || 0;
@@ -698,8 +697,7 @@ export async function renderPeriodoDetalle({ params }) {
   const cerrarBtn = h('button', { class: 'btn primary', onClick: cerrarYEnviar }, 'Cerrar y enviar al buzón');
   async function cerrarYEnviar() {
     if (rows.length === 0) { toast('No hay empleados en este período', 'warn'); return; }
-    // Solo campo/operativo van a obra; oficina va a Empresa (no requiere vínculo).
-    const sinLink = atribuyeAObra(doc.tipo) ? await obrasSinVincular(rows) : [];
+    const sinLink = await obrasSinVincular(rows);
     const obrasMap = sinLink.length ? await listObrasLegacy().catch(() => ({})) : {};
     const ok = await modal({
       title: 'Cerrar y enviar al buzón',
