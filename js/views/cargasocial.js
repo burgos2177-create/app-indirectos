@@ -4,10 +4,11 @@ import { state } from '../state/store.js';
 import {
   listEmpleados, updateEmpleado,
   pushBuzonItem, getBuzonItem, deleteBuzonItem,
-  getCargaSocialMes, setCargaSocialMes, removeCargaSocialMes
+  getCargaSocialMes, setCargaSocialMes, removeCargaSocialMes,
+  getProyectoIdByObraId
 } from '../services/db.js';
 import { money, num0, dateMx, tipoPersonalLabel } from '../util/format.js';
-import { clasificacionDe } from '../util/clasificacion.js';
+import { clasificacionDe, atribuyeAObra } from '../util/clasificacion.js';
 
 // IMSS: cuota mensual (todos los meses).
 // INFONAVIT (+ RCV): bimestral → se cubre en los meses pares (feb, abr, …),
@@ -158,8 +159,8 @@ export async function renderCargaSocial() {
       const b = buckets[key];
       b.importe += monto;
       b.empleados.push({ empleadoId: r.id, nombre: r.nombre, imss, infonavit: info });
-      // prorrateo a obras según asignación del empleado
-      const oa = (empById[r.id] || {}).obrasAsignadas || {};
+      // prorrateo a obras según asignación (solo directo/campo; oficina → Empresa)
+      const oa = atribuyeAObra(r.tipo) ? ((empById[r.id] || {}).obrasAsignadas || {}) : {};
       const ids = Object.keys(oa);
       if (ids.length === 0) { b.sinObra += monto; }
       else {
@@ -197,7 +198,11 @@ export async function renderCargaSocial() {
       const ids = [];
       for (const b of buckets) {
         const porObra = {};
-        for (const k of Object.keys(b.porObra)) porObra[k] = round2(b.porObra[k]);
+        const proyectoPorObra = {};
+        for (const k of Object.keys(b.porObra)) {
+          porObra[k] = round2(b.porObra[k]);
+          proyectoPorObra[k] = await getProyectoIdByObraId(k).catch(() => null);
+        }
         const item = {
           tipo: 'carga_social', origenApp: 'indirectos', estado: 'recibido', creadoPor: state.user?.uid || null,
           concepto: `Carga social ${mesLabel(mesSel)} · ${b.label}${incluirInfonavit ? ' (IMSS+INFONAVIT)' : ' (IMSS)'}`,
@@ -206,7 +211,7 @@ export async function renderCargaSocial() {
           monto: { subtotal: round2(b.importe), iva: 0, importe: round2(b.importe) },
           clasificacion: b.clasificacion, ambito: b.ambito,
           mes: mesSel, incluyeInfonavit: incluirInfonavit,
-          prorrateoPorObra: porObra, sinObra: round2(b.sinObra),
+          prorrateoPorObra: porObra, proyectoPorObra, sinObra: round2(b.sinObra),
           empleados: b.empleados
         };
         ids.push(await pushBuzonItem(item));

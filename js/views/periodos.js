@@ -3,14 +3,14 @@ import { renderShell } from './shell.js';
 import { state } from '../state/store.js';
 import {
   listPeriodos, getPeriodo, setPeriodo, updatePeriodo, removePeriodo,
-  listEmpleados, updateEmpleado, getMeta,
-  pushBuzonItem, getBuzonItem, deleteBuzonItem
+  listEmpleados, updateEmpleado, getMeta, listObrasLegacy,
+  pushBuzonItem, getBuzonItem, deleteBuzonItem, getProyectoIdByObraId
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
 import { money, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
 import { periodoActual } from '../util/calendario.js';
 import { calcularProyeccion } from './escenario.js';
-import { clasificacionDe } from '../util/clasificacion.js';
+import { clasificacionDe, atribuyeAObra } from '../util/clasificacion.js';
 
 const TIPOS = ['operativo', 'tecnico_campo', 'tecnico_oficina', 'directivo'];
 
@@ -97,6 +97,7 @@ function mismoMes(ms, ref) {
 async function publicarPeriodo(periodoId, doc, empMap) {
   const diasLab = Number(doc.diasLaborables) || 0;
   const rows = Object.entries(empMap || {}).map(([empleadoId, e]) => ({ empleadoId, ...e }));
+  const aObra = atribuyeAObra(doc.tipo); // oficina → Empresa (sin prorrateo a obra)
 
   let totalPercep = 0, totalDed = 0, totalNeto = 0, netoSinObra = 0;
   const prorrateoPorObra = {};
@@ -115,7 +116,7 @@ async function publicarPeriodo(periodoId, doc, empMap) {
     };
     const oa = r.obrasAsignadas || {};
     const ids = Object.keys(oa);
-    if (ids.length === 0) { netoSinObra += c.neto; continue; }
+    if (!aObra || ids.length === 0) { netoSinObra += c.neto; continue; }
     const sp = ids.reduce((s, id) => s + (Number(oa[id]?.peso) || 0), 0);
     for (const id of ids) {
       const peso = Number(oa[id]?.peso) || 0;
@@ -124,6 +125,10 @@ async function publicarPeriodo(periodoId, doc, empMap) {
     }
   }
   for (const id of Object.keys(prorrateoPorObra)) prorrateoPorObra[id] = round2(prorrateoPorObra[id]);
+
+  // Resuelve el proyecto contable de cada obra (bitácora también lo resuelve por obraLinks).
+  const proyectoPorObra = {};
+  for (const id of Object.keys(prorrateoPorObra)) proyectoPorObra[id] = await getProyectoIdByObraId(id).catch(() => null);
 
   const clasif = clasificacionDe(doc.tipo);
   const item = {
@@ -138,7 +143,7 @@ async function publicarPeriodo(periodoId, doc, empMap) {
     periodoId, tipoPersonal: doc.tipo, periodicidad: doc.periodicidad,
     fechaInicioISO: doc.fechaInicioISO, fechaCorteISO: doc.fechaCorteISO, label: doc.label,
     totalPercepciones: round2(totalPercep), totalDeducciones: round2(totalDed), totalNeto: round2(totalNeto),
-    numEmpleados: rows.length, prorrateoPorObra, netoSinObra: round2(netoSinObra),
+    numEmpleados: rows.length, prorrateoPorObra, proyectoPorObra, netoSinObra: round2(netoSinObra),
     empleados: Object.entries(empSnapshot).map(([empleadoId, e]) => ({
       empleadoId, nombre: e.nombre, neto: e.neto, obrasAsignadas: e.obrasAsignadas
     }))
@@ -181,6 +186,18 @@ function avisosProgramacion(periodos, autoEnviados) {
     ]));
   }
   return items.length ? h('div', { style: { marginBottom: '16px' } }, items) : null;
+}
+
+// Obras del prorrateo que NO están vinculadas a un proyecto contable.
+async function obrasSinVincular(rows) {
+  const ids = new Set();
+  for (const r of rows) for (const oid of Object.keys(r.obrasAsignadas || {})) ids.add(oid);
+  const out = [];
+  for (const oid of ids) {
+    const p = await getProyectoIdByObraId(oid).catch(() => null);
+    if (!p) out.push(oid);
+  }
+  return out;
 }
 
 async function autoEnviarVencidos(periodos) {
@@ -681,14 +698,21 @@ export async function renderPeriodoDetalle({ params }) {
   const cerrarBtn = h('button', { class: 'btn primary', onClick: cerrarYEnviar }, 'Cerrar y enviar al buzón');
   async function cerrarYEnviar() {
     if (rows.length === 0) { toast('No hay empleados en este período', 'warn'); return; }
+    // Solo campo/operativo van a obra; oficina va a Empresa (no requiere vínculo).
+    const sinLink = atribuyeAObra(doc.tipo) ? await obrasSinVincular(rows) : [];
+    const obrasMap = sinLink.length ? await listObrasLegacy().catch(() => ({})) : {};
     const ok = await modal({
       title: 'Cerrar y enviar al buzón',
       body: h('div', {}, [
         h('p', {}, `Se enviará la nómina de ${tipoPersonalLabel[doc.tipo]} (${doc.label}) al buzón para que el contador la apruebe en bitácora.`),
+        sinLink.length ? h('div', { class: 'readonly-banner', style: { background: 'rgba(245,196,81,.08)', borderColor: 'rgba(245,196,81,.35)' } }, [
+          h('span', { class: 'tag warn' }, 'Obras sin vincular'),
+          h('span', {}, `${sinLink.map(oid => obrasMap[oid]?.meta?.nombre || oid.slice(0, 6)).join(', ')} no está(n) vinculada(s) a un proyecto contable; bitácora no podrá aprobar hasta vincularla(s) allá ("Vincula la obra primero").`)
+        ]) : null,
         h('p', { class: 'muted', style: { fontSize: '12px' } },
           'Al cerrar, el período queda de solo lectura y las deducciones capturadas se guardan como prefill del próximo período. Podrás reabrirlo mientras bitácora no lo haya procesado.')
       ]),
-      confirmLabel: 'Cerrar y enviar'
+      confirmLabel: sinLink.length ? 'Enviar de todos modos' : 'Cerrar y enviar'
     });
     if (!ok) return;
 

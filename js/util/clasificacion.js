@@ -19,3 +19,12 @@ export const CLASIF_PERSONAL = {
 export function clasificacionDe(tipo) {
   return CLASIF_PERSONAL[tipo] || { clasificacion: 'indirecto', ambito: 'oficina', label: 'Indirecto' };
 }
+
+// ¿La nómina/carga social de este tipo se prorratea a las obras?
+// Directo (operativo) e indirecto de CAMPO → sí (van a la obra).
+// Indirecto de OFICINA (téc. oficina + directivo) → no: van a Empresa SOGRUB
+// (overhead general), así que NO requieren vínculo obra→proyecto.
+export function atribuyeAObra(tipo) {
+  const c = clasificacionDe(tipo);
+  return c.clasificacion === 'directo' || c.ambito === 'campo';
+}

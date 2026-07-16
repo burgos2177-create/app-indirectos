@@ -4,7 +4,7 @@ import { state } from '../state/store.js';
 import {
   listGastos, createGasto, updateGasto, removeGasto,
   listCategoriasGasto, listObrasLegacy,
-  pushBuzonItem, getBuzonItem, deleteBuzonItem
+  pushBuzonItem, getBuzonItem, deleteBuzonItem, getProyectoIdByObraId
 } from '../services/db.js';
 import { money, dateMx, num2 } from '../util/format.js';
 
@@ -357,7 +357,7 @@ async function gastoDialog({ cats, obras, gasto = null, onDone }) {
 // - obra_unica      → 1 item con obraId.
 // - prorrateo_obras → N items (uno por obra) con su porción del monto → N movimientos de proyecto.
 // - sogrub_empresa  → 1 item sin obra (empresa=true) → egreso Mifel.
-function buildBuzonItems(g) {
+async function buildBuzonItems(g) {
   const M = montoObj(g);
   const base = {
     tipo: 'gasto_indirecto',
@@ -374,7 +374,7 @@ function buildBuzonItems(g) {
   if (g.proveedorNombre) base.proveedorNombre = g.proveedorNombre;
 
   if (g.modo === 'obra_unica') {
-    const it = { ...base, obraId: g.obraId, monto: { ...M } };
+    const it = { ...base, obraId: g.obraId, proyectoId: await getProyectoIdByObraId(g.obraId).catch(() => null), monto: { ...M } };
     if (g.conceptoKey) it.conceptoKey = g.conceptoKey;
     return [it];
   }
@@ -384,11 +384,13 @@ function buildBuzonItems(g) {
   // prorrateo_obras
   const entries = Object.entries(g.prorrateo || {});
   const sumPeso = entries.reduce((s, [, p]) => s + (Number(p) || 0), 0) || 1;
-  return entries.map(([oid, peso]) => {
+  const out = [];
+  for (const [oid, peso] of entries) {
     const frac = (Number(peso) || 0) / sumPeso;
-    return {
+    out.push({
       ...base,
       obraId: oid,
+      proyectoId: await getProyectoIdByObraId(oid).catch(() => null),
       concepto: `${g.concepto} (prorrateo ${num2(peso)}%)`,
       monto: {
         subtotal: round2(M.subtotal * frac),
@@ -396,8 +398,9 @@ function buildBuzonItems(g) {
         importe: round2(M.importe * frac)
       },
       prorrateoPeso: Number(peso) || 0
-    };
-  });
+    });
+  }
+  return out;
 }
 
 function buzonIdsDe(g) {
@@ -407,7 +410,7 @@ function buzonIdsDe(g) {
 
 async function enviarGasto(g, onDone) {
   try {
-    const items = buildBuzonItems(g);
+    const items = await buildBuzonItems(g);
     if (items.length === 0) { toast('No hay obras/atribución para enviar', 'warn'); return; }
     const ids = [];
     for (const it of items) ids.push(await pushBuzonItem(it));
