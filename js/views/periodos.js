@@ -4,7 +4,8 @@ import { state } from '../state/store.js';
 import {
   listPeriodos, getPeriodo, setPeriodo, updatePeriodo, removePeriodo,
   listEmpleados, updateEmpleado, getMeta, listObrasLegacy,
-  pushBuzonItem, getBuzonItem, deleteBuzonItem, getProyectoIdByObraId
+  pushBuzonItem, getBuzonItem, deleteBuzonItem, getProyectoIdByObraId,
+  buzonEstadoActivo
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
 import { money, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
@@ -513,8 +514,8 @@ async function eliminarPeriodoFlow(p, onDone) {
   if (p.estado === 'cerrado' && p.buzonItemId) {
     let item = null;
     try { item = await getBuzonItem(p.buzonItemId); } catch { item = null; }
-    if (item && item.estado && item.estado !== 'recibido') {
-      toast('Contabilidad ya procesó esta nómina; no se puede eliminar.', 'warn');
+    if (item && buzonEstadoActivo(item.estado)) {
+      toast('Contabilidad tiene esta nómina aprobada o pagada; pídele que la rechace antes de eliminarla.', 'warn');
       return;
     }
   }
@@ -729,8 +730,8 @@ export async function renderPeriodoDetalle({ params }) {
   async function reabrir() {
     let item = null;
     if (doc.buzonItemId) { try { item = await getBuzonItem(doc.buzonItemId); } catch { item = null; } }
-    if (item && item.estado && item.estado !== 'recibido') {
-      toast('Contabilidad ya procesó esta nómina; no se puede reabrir.', 'warn');
+    if (item && buzonEstadoActivo(item.estado)) {
+      toast('Contabilidad ya aprobó/pagó esta nómina; no se puede reabrir (que la rechace primero).', 'warn');
       return;
     }
     const ok = await modal({

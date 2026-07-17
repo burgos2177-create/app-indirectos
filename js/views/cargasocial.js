@@ -5,7 +5,7 @@ import {
   listEmpleados, updateEmpleado,
   pushBuzonItem, getBuzonItem, deleteBuzonItem,
   getCargaSocialMes, setCargaSocialMes, removeCargaSocialMes,
-  getProyectoIdByObraId
+  getProyectoIdByObraId, buzonEstadoActivo
 } from '../services/db.js';
 import { money, num0, dateMx, tipoPersonalLabel } from '../util/format.js';
 import { clasificacionDe } from '../util/clasificacion.js';
@@ -232,8 +232,8 @@ export async function renderCargaSocial() {
     for (const id of ids) {
       let item = null;
       try { item = await getBuzonItem(id); } catch { item = null; }
-      if (item && item.estado && item.estado !== 'recibido') {
-        toast('Contabilidad ya procesó esta carga social; no se puede quitar.', 'warn');
+      if (item && buzonEstadoActivo(item.estado)) {
+        toast('Contabilidad ya aprobó/pagó esta carga social; no se puede quitar (que la rechace primero).', 'warn');
         return;
       }
     }

@@ -4,7 +4,7 @@ import { state } from '../state/store.js';
 import {
   listGastos, createGasto, updateGasto, removeGasto,
   listCategoriasGasto, listObrasLegacy,
-  pushBuzonItem, getBuzonItem, deleteBuzonItem, getProyectoIdByObraId
+  pushBuzonItem, getBuzonItem, deleteBuzonItem, getProyectoIdByObraId, buzonEstadoActivo
 } from '../services/db.js';
 import { money, dateMx, num2 } from '../util/format.js';
 
@@ -425,8 +425,8 @@ async function quitarDelBuzon(g, onDone) {
   for (const id of ids) {
     let item = null;
     try { item = await getBuzonItem(id); } catch { item = null; }
-    if (item && item.estado && item.estado !== 'recibido') {
-      toast('Contabilidad ya procesó este gasto; no se puede quitar.', 'warn');
+    if (item && buzonEstadoActivo(item.estado)) {
+      toast('Contabilidad ya aprobó/pagó este gasto; no se puede quitar (que lo rechace primero).', 'warn');
       return;
     }
   }

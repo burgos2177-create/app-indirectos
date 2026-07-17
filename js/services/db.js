@@ -98,6 +98,16 @@ export async function deleteBuzonItem(itemId) {
   return rremove(`/shared/buzon/${itemId}`);
 }
 
+// ¿El item del buzón tiene un movimiento contable ACTIVO en bitácora
+// (aprobado / por pagar / pagado / cobrado)? En esos casos indirectos NO debe
+// borrar ni reabrir (dejaría huérfano un movimiento vivo). En cambio recibido,
+// en revisión, RECHAZADO, cerrado y huérfano sí se pueden limpiar (ahí ya no
+// hay movimiento contable activo).
+const BUZON_ESTADOS_ACTIVOS = ['aprobado', 'por_pagar', 'porpagar', 'pagado', 'cobrado', 'contabilizado'];
+export function buzonEstadoActivo(estado) {
+  return BUZON_ESTADOS_ACTIVOS.includes(String(estado || '').toLowerCase());
+}
+
 export function filtrarBuzon(buzon, { tipo, tiposIn, obraId, estado, estadosIn } = {}) {
   const out = {};
   for (const [id, item] of Object.entries(buzon || {})) {
