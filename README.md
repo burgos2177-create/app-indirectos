@@ -96,7 +96,16 @@ movimiento `{tipo:"gasto", estado:"reportado", buzonItemId}` y el item de buzón
 `{tipo:"gasto_caja_chica", movimientoId, monto (bruto), incluyeIva, categoriaSugerida,
 ambitoSugerido, proyectoId?}`. El ciclo de estados (reportado→aprobado/rechazado) lo
 maneja el contador en bitácora; indirectos solo escribe `reportado` y refleja. Saldo =
-depósitos (transferencia) − gastos aprobados. Depósito opcional (`deposito_caja_chica`).
+depósitos (transferencia, `estado='aprobado'` o sin estado legacy) − gastos aprobados.
+Depósito opcional (`deposito_caja_chica`).
+
+**Dos fondos por obra (2026-07-25)**: cada movimiento pertenece a un fondo — `fondo`
+ausente = transferencia (histórico) o `fondo:'efectivo'` (billete físico). La vista
+tiene pills 🏦/💵 (`?fondo=` en la ruta); `calcSaldo(movs, fondo)` calcula por fondo.
+En el fondo efectivo el depósito nace `estado:'solicitado'`, SÍ va al buzón y al
+aprobarlo el contador lo saca de la caja física de SOGRUB (no de Mifel) — entonces
+suma al saldo del fondo. Gastos del fondo llevan `fondo:'efectivo'` en el movimiento
+y en el item de buzón. Contrato: `appsogrub/docs/spec-caja-chica-fondo-efectivo.md`.
 
 ## Documentación de decisiones
 Ver memoria del proyecto en
