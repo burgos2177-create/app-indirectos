@@ -1,27 +1,21 @@
-// Service worker de app-indirectos.
+// Service worker de app-indirectos — network-first, a prueba de señal intermitente.
 //
-// Objetivo: que cada despliegue se vea al instante, sin necesidad de hard-refresh.
+// Objetivo: que cada despliegue se vea rápido SIN que la app se caiga en obra.
 //
-// Problema que resuelve: la app usa módulos ES nativos (sin bundler). El
-// navegador cachea cada .js por su URL; como las URLs no cambian entre deploys,
-// se quedaban servidas versiones viejas hasta que expiraba el caché de GitHub
-// Pages (~10 min) o se hacía Ctrl+Shift+R.
+// Historia: la versión anterior usaba fetch(req, {cache:'no-store'}) sin
+// fallback — si la red fallaba (típico en obra con señal intermitente), el
+// respondWith recibía una promesa rechazada y Safari/Chrome mostraban página
+// en blanco ("Load failed"). Mismo bug que ya se corrigió en app-estimaciones.
 //
-// Estrategia: NO cachea nada. Solo intercepta las peticiones GET del mismo
-// origen a archivos de la app (JS/CSS/HTML/…) y las reenvía a la red saltando
-// el caché HTTP del navegador (cache: 'no-store'). Así siempre se obtiene lo
-// último que publicó GitHub Pages. Las peticiones cross-origin (Firebase, CDN
-// de gstatic) no se tocan.
+// Estrategia: red primero (código fresco); si la red falla, caché; si es una
+// navegación sin caché, el shell (index.html). NUNCA devuelve vacío.
+const CACHE = 'indir-cache-v1';
 
-self.addEventListener('install', () => {
-  // Activa la versión nueva del SW de inmediato, sin esperar.
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', (event) => {
-  // Toma control de las pestañas ya abiertas sin esperar a que se cierren.
-  event.waitUntil(self.clients.claim());
-});
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil((async () => {
+  for (const k of await caches.keys()) { if (k !== CACHE) await caches.delete(k); }
+  await self.clients.claim();
+})()));
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
@@ -35,6 +29,25 @@ self.addEventListener('fetch', (event) => {
   const esNavegacion = req.mode === 'navigate';
   if (!esAsset && !esNavegacion) return;
 
-  // Siempre a la red, sin usar el caché del navegador.
-  event.respondWith(fetch(req, { cache: 'no-store' }));
+  event.respondWith((async () => {
+    try {
+      const res = await fetch(req);            // network-first (caché HTTP como respaldo natural)
+      if (res && res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+      }
+      return res;
+    } catch (e) {
+      // Red caída o señal intermitente → servir de caché.
+      const cached = await caches.match(req);
+      if (cached) return cached;
+      // Navegación sin caché → servir el shell para que la SPA arranque igual.
+      if (esNavegacion) {
+        const shell = (await caches.match('./index.html')) || (await caches.match('index.html')) || (await caches.match('./'));
+        if (shell) return shell;
+      }
+      // Último recurso: una respuesta válida (nunca undefined → nunca pantalla en blanco).
+      return new Response('Sin conexión. Reintenta cuando tengas señal.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    }
+  })());
 });

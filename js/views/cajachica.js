@@ -20,21 +20,34 @@ function autorActual() {
 }
 
 // Fórmula de saldo EXACTA (misma en materiales y bitácora — no cambiar).
-function calcSaldo(movs) {
-  let saldo = 0, depositado = 0, gastadoAprobado = 0, reportadoPend = 0;
+// Un saldo POR FONDO: cada movimiento pertenece al fondo 'transferencia'
+// (m.fondo ausente, todo lo histórico) o 'efectivo' (billete físico; el
+// contador lo saca de la caja física SOGRUB al aprobar el depósito).
+// Depósitos cuentan cuando estado='aprobado' (sin estado = aprobado, legacy);
+// en el fondo transferencia además deben ser metodo 'transferencia' (el
+// depósito "efectivo" sin fondo es informativo). Gastos aprobados restan.
+// Ver appsogrub/docs/spec-caja-chica-fondo-efectivo.md.
+const fondoDeMov = (m) => (m?.fondo === 'efectivo' ? 'efectivo' : 'transferencia');
+
+function calcSaldo(movs, fondo = 'transferencia') {
+  let saldo = 0, depositado = 0, gastadoAprobado = 0, reportadoPend = 0, depositoPend = 0;
   for (const m of Object.values(movs || {})) {
+    if (fondoDeMov(m) !== fondo) continue;
     const monto = Number(m.monto) || 0;
     if (m.tipo === 'deposito') {
       const metodo = m.metodoDeposito || 'transferencia';
-      if (metodo === 'efectivo') continue; // informativo, no afecta saldo
-      saldo += monto; depositado += monto;
+      if (fondo === 'transferencia' && metodo === 'efectivo') continue; // informativo legacy
+      const estado = m.estado || 'aprobado';   // legacy default
+      if (estado === 'aprobado') { saldo += monto; depositado += monto; }
+      else if (estado === 'solicitado') { depositoPend += monto; }
+      // rechazado: no afecta
     } else if (m.tipo === 'gasto') {
       if (m.estado === 'aprobado') { saldo -= monto; gastadoAprobado += monto; }
       else if (m.estado === 'reportado') { reportadoPend += monto; }
       // rechazado: no afecta
     }
   }
-  return { saldo, depositado, gastadoAprobado, reportadoPend };
+  return { saldo, depositado, gastadoAprobado, reportadoPend, depositoPend };
 }
 
 function field(label, el, hint) {
@@ -59,6 +72,8 @@ export async function renderCajaChica({ query } = {}) {
   }
 
   const obraId = (query?.obra && obras[query.obra]) ? query.obra : obraIds[0];
+  const fondo = query?.fondo === 'efectivo' ? 'efectivo' : 'transferencia';
+  const esEfectivo = fondo === 'efectivo';
 
   let caja;
   try { caja = await getCajaChica(obraId); }
@@ -67,27 +82,43 @@ export async function renderCajaChica({ query } = {}) {
   const movs = caja?.movimientos || {};
   const meta = caja?.meta || {};
   const umbral = Number(meta.umbralAlerta) || 1000;
-  const s = calcSaldo(movs);
+  const s = calcSaldo(movs, fondo);
+  const sOtro = calcSaldo(movs, esEfectivo ? 'transferencia' : 'efectivo');
 
-  const refresh = () => renderCajaChica({ query: { obra: obraId } });
+  const refresh = () => renderCajaChica({ query: { obra: obraId, fondo } });
 
   // === Selector de obra ===
   const obraSel = h('select', {
     value: obraId,
-    onChange: () => navigate('/caja-chica?obra=' + obraSel.value)
+    onChange: () => navigate('/caja-chica?obra=' + obraSel.value + '&fondo=' + fondo)
   }, obraIds.map(oid => h('option', { value: oid, selected: oid === obraId }, obras[oid]?.meta?.nombre || oid.slice(0, 6))));
+
+  // === Selector de fondo (dos fondos conviven por obra) ===
+  const fondoPill = (f, label, saldoStr) => h('button', {
+    class: 'btn' + (f === fondo ? ' primary' : ''),
+    style: f === fondo ? {} : { opacity: '.75' },
+    onClick: () => navigate('/caja-chica?obra=' + obraId + '&fondo=' + f)
+  }, label + (saldoStr ? ` · ${saldoStr}` : ''));
+  const fondoRow = h('div', { class: 'row', style: { gap: '8px', marginBottom: '12px' } }, [
+    fondoPill('transferencia', '🏦 Fondo transferencia', esEfectivo ? money(sOtro.saldo) : ''),
+    fondoPill('efectivo', '💵 Fondo efectivo', esEfectivo ? '' : money(sOtro.saldo))
+  ]);
 
   // === Saldo ===
   const saldoBajo = s.saldo < umbral;
   const kpiRow = h('div', { class: 'kpi-row' }, [
     h('div', { class: 'kpi ' + (saldoBajo ? '' : 'accent') }, [h('span', { class: 'kpi-label' }, 'Saldo conciliado'), h('span', { class: 'kpi-value', style: saldoBajo ? { color: 'var(--danger)' } : {} }, money(s.saldo))]),
-    h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Depositado (transfer.)'), h('span', { class: 'kpi-value' }, money(s.depositado))]),
+    h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, esEfectivo ? 'Depositado (efectivo)' : 'Depositado (transfer.)'), h('span', { class: 'kpi-value' }, money(s.depositado))]),
     h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Gastado (aprobado)'), h('span', { class: 'kpi-value' }, money(s.gastadoAprobado))]),
-    h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Reportado pendiente'), h('span', { class: 'kpi-value' }, money(s.reportadoPend))])
+    h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Reportado pendiente'), h('span', { class: 'kpi-value' }, money(s.reportadoPend))]),
+    s.depositoPend > 0
+      ? h('div', { class: 'kpi' }, [h('span', { class: 'kpi-label' }, 'Depósito solicitado'), h('span', { class: 'kpi-value' }, money(s.depositoPend))])
+      : null
   ]);
 
-  // === Movimientos ===
+  // === Movimientos (solo el fondo activo) ===
   const lista = Object.entries(movs).map(([id, m]) => ({ id, ...m }))
+    .filter(m => fondoDeMov(m) === fondo)
     .sort((a, b) => (Number(b.fecha) || Number(b.createdAt) || 0) - (Number(a.fecha) || Number(a.createdAt) || 0));
 
   const tabla = lista.length === 0
@@ -107,15 +138,19 @@ export async function renderCajaChica({ query } = {}) {
   const head = h('div', { class: 'row', style: { marginBottom: '8px' } }, [
     h('h1', { style: { margin: 0 } }, 'Caja chica'),
     h('div', { style: { flex: 1 } }),
-    h('button', { class: 'btn', onClick: () => depositoDialog(obraId, refresh) }, '+ Depósito'),
-    h('button', { class: 'btn primary', onClick: () => gastoDialog(obraId, refresh) }, '+ Reportar gasto')
+    h('button', { class: 'btn', onClick: () => depositoDialog(obraId, refresh, fondo) },
+      esEfectivo ? '+ Depósito en efectivo' : '+ Depósito'),
+    h('button', { class: 'btn primary', onClick: () => gastoDialog(obraId, refresh, fondo) }, '+ Reportar gasto')
   ]);
 
   renderShell(crumbs, h('div', {}, [
     head,
     h('p', { class: 'muted', style: { margin: '0 0 12px' } },
-      'Cada obra tiene su propia caja chica (fondo separado). Para una misma obra, el fondo es compartido con materiales (mismo saldo). Reporta aquí los gastos pagados en efectivo; el contador los aprueba en bitácora y el saldo baja cuando quedan aprobados.'),
+      esEfectivo
+        ? '💵 Fondo de efectivo de la obra (compartido con materiales). Los depósitos son billete físico que el contador saca de la caja de SOGRUB al aprobar — SÍ afectan el saldo de este fondo. Los gastos se reportan y bajan el saldo al aprobarse.'
+        : 'Cada obra tiene su propia caja chica (fondo separado). Para una misma obra, el fondo es compartido con materiales (mismo saldo). Reporta aquí los gastos pagados en efectivo; el contador los aprueba en bitácora y el saldo baja cuando quedan aprobados.'),
     h('div', { class: 'row', style: { marginBottom: '14px', maxWidth: '380px' } }, [field('Obra (caja separada)', obraSel)]),
+    fondoRow,
     saldoBajo ? h('div', { class: 'readonly-banner', style: { background: 'rgba(255,107,107,.08)', borderColor: 'rgba(255,107,107,.35)' } }, [
       h('span', { class: 'tag danger' }, 'Saldo bajo'),
       h('span', {}, `El saldo de ${obraNombre} (${money(s.saldo)}) está por debajo del umbral de alerta (${money(umbral)}).`)
@@ -139,9 +174,14 @@ const ESTADO_MOV = {
 
 function movRow(m, obraId, refresh) {
   const esGasto = m.tipo === 'gasto';
+  const esFondoEf = fondoDeMov(m) === 'efectivo';
+  const depEstado = m.estado || 'aprobado';   // legacy default
   const estadoTag = esGasto
     ? (() => { const [cls, label] = ESTADO_MOV[m.estado] || ['', m.estado || '—']; return h('span', { class: 'tag ' + cls }, label); })()
-    : h('span', { class: 'tag' }, 'Depósito' + (m.metodoDeposito === 'efectivo' ? ' (efectivo)' : ''));
+    : esFondoEf
+    ? h('span', { class: 'tag ' + (depEstado === 'aprobado' ? 'ok' : depEstado === 'rechazado' ? 'danger' : 'warn') },
+        `💵 Depósito ${depEstado === 'aprobado' ? 'aprobado' : depEstado}`)
+    : h('span', { class: 'tag' }, 'Depósito' + (m.metodoDeposito === 'efectivo' ? ' (efectivo informativo)' : ''));
 
   const propio = m.origen === 'indirectos';
   const borrable = propio && (m.tipo === 'deposito' || m.estado === 'reportado' || m.estado === 'rechazado') && m.estado !== 'aprobado';
@@ -167,7 +207,7 @@ function movRow(m, obraId, refresh) {
 }
 
 // === Reportar gasto ===
-async function gastoDialog(obraId, refresh) {
+async function gastoDialog(obraId, refresh, fondo = 'transferencia') {
   const fecha = h('input', { type: 'date', value: todayInput() });
   const monto = h('input', { type: 'number', step: '0.01', min: '0', value: 0, onInput: recalc });
   const incluyeIva = h('input', { type: 'checkbox', checked: true, onChange: recalc });
@@ -196,7 +236,7 @@ async function gastoDialog(obraId, refresh) {
   renderAmbito();
 
   await modal({
-    title: 'Reportar gasto de caja chica',
+    title: fondo === 'efectivo' ? '💵 Reportar gasto · fondo efectivo' : 'Reportar gasto de caja chica',
     size: 'lg',
     body: h('div', {}, [
       h('div', { class: 'grid-2' }, [field('Fecha', fecha), field('Proveedor', proveedor)]),
@@ -223,10 +263,12 @@ async function gastoDialog(obraId, refresh) {
       let proyectoId = null;
       try { proyectoId = await getProyectoIdByObraId(obraId); } catch { proyectoId = null; }
 
+      const esEfectivo = fondo === 'efectivo';
       const mov = {
         tipo: 'gasto', estado: 'reportado', monto: m, fecha: fechaMs,
         comentario: comentario.value.trim(), autor, origen: 'indirectos', createdAt: ahora
       };
+      if (esEfectivo) mov.fondo = 'efectivo';
       const item = {
         tipo: 'gasto_caja_chica', origenApp: 'indirectos', obraId,
         proyectoId: proyectoId || null,
@@ -238,6 +280,7 @@ async function gastoDialog(obraId, refresh) {
         ambitoSugerido: categoria.value === 'Indirecto' ? ambito.value : null,
         estado: 'recibido', creadoAt: ahora
       };
+      if (esEfectivo) item.fondo = 'efectivo';
       try {
         await reportarGastoCajaChica(obraId, mov, item);
         toast('Gasto reportado', 'ok');
@@ -249,7 +292,12 @@ async function gastoDialog(obraId, refresh) {
 }
 
 // === Depositar ===
-async function depositoDialog(obraId, refresh) {
+// Fondo transferencia: método transferencia (va al buzón, suma al aprobarse)
+// o efectivo informativo (no afecta saldo, no va al buzón — legacy).
+// Fondo efectivo: siempre billete físico, nace 'solicitado' y SÍ va al buzón;
+// al aprobar, el contador lo saca de la caja física SOGRUB y suma al fondo.
+async function depositoDialog(obraId, refresh, fondo = 'transferencia') {
+  const esEfectivo = fondo === 'efectivo';
   const fecha = h('input', { type: 'date', value: todayInput() });
   const monto = h('input', { type: 'number', step: '0.01', min: '0', value: 0 });
   const comentario = h('input', { placeholder: 'Referencia / comentario (opcional)' });
@@ -263,14 +311,19 @@ async function depositoDialog(obraId, refresh) {
   });
 
   await modal({
-    title: 'Depósito a caja chica',
+    title: esEfectivo ? '💵 Depósito · fondo efectivo' : 'Depósito a caja chica',
     body: h('div', {}, [
       h('div', { class: 'grid-2' }, [field('Fecha', fecha), field('Monto', monto)]),
-      h('div', { style: { marginTop: '12px' } }, [h('label', { class: 'muted', style: { fontSize: '12px' } }, 'Método'), chips]),
+      esEfectivo
+        ? h('p', { class: 'muted', style: { fontSize: '12px', marginTop: '10px', lineHeight: 1.5 } },
+            '💵 Billete físico al fondo de efectivo de la obra. Nace como solicitud; al aprobarla el contador la saca de la caja física de SOGRUB y SÍ suma al saldo de este fondo.')
+        : h('div', { style: { marginTop: '12px' } }, [h('label', { class: 'muted', style: { fontSize: '12px' } }, 'Método'), chips]),
       h('div', { class: 'field', style: { marginTop: '4px' } }, [h('label', {}, 'Comentario'), comentario]),
-      h('p', { class: 'muted', style: { fontSize: '11px', marginTop: '8px' } }, 'La transferencia suma al saldo y se manda al buzón para que el contador la asiente. El efectivo es solo informativo.')
+      esEfectivo
+        ? null
+        : h('p', { class: 'muted', style: { fontSize: '11px', marginTop: '8px' } }, 'La transferencia suma al saldo y se manda al buzón para que el contador la asiente. El efectivo es solo informativo.')
     ]),
-    confirmLabel: 'Registrar depósito',
+    confirmLabel: esEfectivo ? 'Solicitar depósito' : 'Registrar depósito',
     onConfirm: async () => {
       const m = Number(monto.value) || 0;
       if (m <= 0) { toast('El monto debe ser mayor a 0', 'warn'); return false; }
@@ -278,24 +331,27 @@ async function depositoDialog(obraId, refresh) {
       const ahora = Date.now();
       const autor = autorActual();
       const mov = {
-        tipo: 'deposito', monto: m, metodoDeposito: metodo,
+        tipo: 'deposito', monto: m, metodoDeposito: esEfectivo ? 'efectivo' : metodo,
         comentario: comentario.value.trim() || null, fecha: fechaMs,
         autor, origen: 'indirectos', createdAt: ahora
       };
+      if (esEfectivo) { mov.fondo = 'efectivo'; mov.estado = 'solicitado'; }
       let item = null;
-      if (metodo === 'transferencia') {
+      if (esEfectivo || metodo === 'transferencia') {
         let proyectoId = null;
         try { proyectoId = await getProyectoIdByObraId(obraId); } catch { proyectoId = null; }
         item = {
           tipo: 'deposito_caja_chica', origenApp: 'indirectos', obraId,
-          proyectoId: proyectoId || null, monto: m, metodoDeposito: 'transferencia',
+          proyectoId: proyectoId || null, monto: m,
+          metodoDeposito: esEfectivo ? 'efectivo' : 'transferencia',
           comentario: comentario.value.trim() || null, fecha: fechaMs,
           estado: 'recibido', creadoAt: ahora
         };
+        if (esEfectivo) item.fondo = 'efectivo';
       }
       try {
         await depositarCajaChica(obraId, mov, item);
-        toast('Depósito registrado', 'ok');
+        toast(esEfectivo ? 'Depósito al fondo efectivo solicitado' : 'Depósito registrado', 'ok');
         refresh();
         return true;
       } catch (err) { toast('Error: ' + err.message, 'danger'); return false; }
