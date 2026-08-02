@@ -52,6 +52,7 @@ input[disabled], select[disabled], textarea[disabled] { opacity: .55; cursor: no
   position: sticky; top: 0; z-index: 10;
 }
 .topbar .logo { font-weight: 700; font-size: 15px; color: var(--accent); letter-spacing: .3px; }
+.topbar .ver { font-family: var(--mono); font-size: 10px; color: var(--text-2); }
 .topbar .crumbs { display: flex; gap: 8px; align-items: center; color: var(--text-1); font-size: 13px; }
 .topbar .crumbs span.sep { color: var(--text-2); }
 .topbar .spacer { flex: 1; }

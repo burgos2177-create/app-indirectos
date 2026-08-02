@@ -9,13 +9,23 @@
 //
 // Estrategia: red primero (código fresco); si la red falla, caché; si es una
 // navegación sin caché, el shell (index.html). NUNCA devuelve vacío.
-const CACHE = 'indir-cache-v1';
+const CACHE = 'indir-cache-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil((async () => {
   for (const k of await caches.keys()) { if (k !== CACHE) await caches.delete(k); }
   await self.clients.claim();
 })()));
+
+// Pide a la RED saltando el caché HTTP del navegador. Sin esto, GitHub Pages
+// responde Cache-Control: max-age=600 y los módulos ES (que se importan por URL
+// fija, sin ?v=) se quedaban hasta 10 minutos servidos de caché: se desplegaba
+// un cambio y no se veía. Si el navegador rechaza el override o no hay red, se
+// reintenta normal y el catch de arriba cae a caché — nunca pantalla en blanco.
+async function redFresca(req) {
+  try { return await fetch(req, { cache: 'no-store' }); }
+  catch (e) { return await fetch(req); }
+}
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
@@ -31,7 +41,7 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith((async () => {
     try {
-      const res = await fetch(req);            // network-first (caché HTTP como respaldo natural)
+      const res = await redFresca(req);        // network-first, saltando el caché HTTP
       if (res && res.ok) {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});

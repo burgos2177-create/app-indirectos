@@ -2,10 +2,12 @@ import { h, mount } from '../util/dom.js';
 import { state } from '../state/store.js';
 import { logout } from '../services/auth.js';
 import { navigate } from '../state/router.js';
+import { APP_VERSION } from '../config/version.js';
 
 export function renderShell(crumbs, body) {
   const top = h('header', { class: 'topbar' }, [
     h('div', { class: 'logo', onClick: () => navigate('/'), style: { cursor: 'pointer' } }, 'Indirectos'),
+    h('span', { class: 'ver', title: 'Versión desplegada que está corriendo el navegador' }, 'v' + APP_VERSION),
     crumbsView(crumbs),
     h('div', { class: 'spacer' }),
     h('div', { class: 'userchip' }, [
