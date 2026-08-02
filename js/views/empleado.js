@@ -3,10 +3,11 @@ import { renderShell } from './shell.js';
 import { state } from '../state/store.js';
 import {
   getEmpleado, createEmpleado, updateEmpleado, removeEmpleado,
-  listObrasLegacy, listPeriodos
+  listObrasLegacy, listPeriodos, listPuestos
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
-import { money, num, num2, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo, uid as randId } from '../util/format.js';
+import { money, num, num2, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo, slug, uid as randId } from '../util/format.js';
+import { puestosOrdenados, camposPreset, puestoDialog } from './puestos.js';
 import { TIPOS_DOCUMENTO, esUrlValida } from '../services/documentos.js';
 import { calcularFiniquito } from '../util/finiquito.js';
 
@@ -47,12 +48,13 @@ export async function renderEmpleadoEditor({ params }) {
 
   renderShell(crumbs, h('div', { class: 'empty' }, 'Cargando…'));
 
-  let empleado, obras, periodos;
+  let empleado, obras, periodos, puestosRaw;
   try {
-    [empleado, obras, periodos] = await Promise.all([
+    [empleado, obras, periodos, puestosRaw] = await Promise.all([
       isNuevo ? Promise.resolve(emptyEmpleado()) : getEmpleado(params.id),
       listObrasLegacy(),
-      isNuevo ? Promise.resolve({}) : listPeriodos()
+      isNuevo ? Promise.resolve({}) : listPeriodos(),
+      listPuestos()
     ]);
   } catch (err) {
     renderShell(crumbs, h('div', { class: 'empty' }, 'Error: ' + err.message));
@@ -78,13 +80,16 @@ export async function renderEmpleadoEditor({ params }) {
   refs.curp = h('input', { value: draft.curp || '', placeholder: 'CURP (opcional)' });
   refs.nss = h('input', { value: draft.nss || '', placeholder: 'NSS (opcional)' });
   refs.tipo = h('select', {
-    onChange: () => {
-      draft.tipo = refs.tipo.value;
-      refs.periodicidadLabel.textContent = periodicidadDeTipo(draft.tipo) === 'semanal' ? 'Semanal' : 'Quincenal';
-      refs.sueldoLabel.textContent = sueldoLabelText();
-      updateMensualHint();
-    }
+    onChange: () => aplicarTipo(refs.tipo.value)
   }, TIPOS.map(t => h('option', { value: t, selected: draft.tipo === t }, tipoPersonalLabel[t])));
+  // Fija el tipo y sincroniza select, etiqueta de periodicidad y textos derivados.
+  function aplicarTipo(t) {
+    draft.tipo = t;
+    if (refs.tipo.value !== t) refs.tipo.value = t;
+    refs.periodicidadLabel.textContent = periodicidadDeTipo(t) === 'semanal' ? 'Semanal' : 'Quincenal';
+    refs.sueldoLabel.textContent = sueldoLabelText();
+    updateMensualHint();
+  }
   if (!draft.tipo) draft.tipo = refs.tipo.value;
   refs.periodicidadLabel = h('span', { class: 'tag' },
     periodicidadDeTipo(draft.tipo) === 'semanal' ? 'Semanal' : 'Quincenal');
@@ -114,8 +119,136 @@ export async function renderEmpleadoEditor({ params }) {
   updateMensualHint();
   refs.notas = h('textarea', { rows: 3, placeholder: 'Notas internas (opcional)' }, draft.notas || '');
 
-  // Puesto y datos de contacto.
-  refs.puesto = h('input', { value: draft.puesto || '', placeholder: 'Ej. Albañil, Residente, Contador' });
+  // === Puesto: selector del catálogo de presets (tabulador) ===
+  //
+  // El preset PRECARGA tipo, sueldo base, bono y SDI; después de aplicarlo el
+  // empleado es independiente (puedes ajustarle cualquier valor sin tocar el
+  // preset). draft.puesto guarda el nombre legible y draft.puestoId el preset
+  // del que salió.
+  const OPT_VACIO = '';
+  const OPT_LIBRE = '__libre__';
+  const OPT_NUEVO = '__nuevo__';
+  const presets = puestosOrdenados(puestosRaw)
+    .filter(p => p.activo !== false || p.id === draft.puestoId);
+  const usadosIds = new Set(Object.keys(puestosRaw || {}));
+  let puestoLibre = '';        // puesto escrito a mano que no está en el catálogo
+  let valorPrevio = OPT_VACIO;
+
+  // Empata la ficha con un preset por id y, si no, por nombre normalizado
+  // (empleados dados de alta antes de que existiera el catálogo).
+  function matchPreset() {
+    if (draft.puestoId) {
+      const byId = presets.find(p => p.id === draft.puestoId);
+      if (byId) return byId;
+    }
+    const n = slug(draft.puesto || '', '');
+    return n ? (presets.find(p => slug(p.nombre || '', '') === n) || null) : null;
+  }
+  const presetInicial = matchPreset();
+  if (presetInicial) draft.puestoId = presetInicial.id;   // fija el vínculo al guardar
+  else if (draft.puesto) puestoLibre = draft.puesto;
+
+  refs.puesto = h('select', { onChange: onPuestoChange });
+  function opcionesPuesto() {
+    const sel = matchPreset();
+    refs.puesto.innerHTML = '';
+    refs.puesto.appendChild(h('option', { value: OPT_VACIO }, '— Sin puesto —'));
+    if (puestoLibre) refs.puesto.appendChild(h('option', { value: OPT_LIBRE }, `${puestoLibre} (sin preset)`));
+    for (const p of presets) {
+      const suf = periodicidadDeTipo(p.tipo) === 'semanal' ? '/sem' : '/quin';
+      refs.puesto.appendChild(h('option', { value: p.id }, `${p.nombre} — ${money(p.sueldoBase)}${suf}`));
+    }
+    refs.puesto.appendChild(h('option', { value: OPT_NUEVO }, '+ Nuevo puesto…'));
+    refs.puesto.value = sel ? sel.id : (puestoLibre ? OPT_LIBRE : OPT_VACIO);
+    valorPrevio = refs.puesto.value;
+  }
+
+  const valoresActuales = () => ({
+    tipo: draft.tipo,
+    sueldoBase: Number(refs.sueldoBase.value) || 0,
+    bonos: Number(refs.bonos.value) || 0,
+    sdi: Number(refs.sdi.value) || 0
+  });
+  function aplicarValores(v) {
+    refs.sueldoBase.value = v.sueldoBase;
+    refs.bonos.value = v.bonos;
+    refs.sdi.value = v.sdi;
+    aplicarTipo(v.tipo);       // refresca etiquetas y el hint mensual
+  }
+
+  async function onPuestoChange() {
+    const v = refs.puesto.value;
+
+    if (v === OPT_NUEVO) {
+      refs.puesto.value = valorPrevio;   // no dejar seleccionada la opción-acción
+      const r = await puestoDialog({
+        usadosIds, orden: presets.length + 1, preguntarGuardar: true,
+        iniciales: { nombre: '', ...valoresActuales() }
+      });
+      if (!r) return;
+      draft.puesto = r.nombre;
+      if (r.guardado) {
+        draft.puestoId = r.id;
+        usadosIds.add(r.id);
+        presets.push({ id: r.id, activo: true, orden: presets.length + 1, ...camposPreset(r), nombre: r.nombre });
+        puestoLibre = '';
+      } else {
+        draft.puestoId = null;
+        puestoLibre = r.nombre;
+      }
+      aplicarValores(camposPreset(r));
+      opcionesPuesto();
+      return;
+    }
+
+    valorPrevio = v;
+    if (v === OPT_VACIO) { draft.puesto = null; draft.puestoId = null; return; }
+    if (v === OPT_LIBRE) { draft.puesto = puestoLibre; draft.puestoId = null; return; }
+
+    const p = presets.find(x => x.id === v);
+    if (!p) return;
+    draft.puesto = p.nombre;
+    draft.puestoId = p.id;
+    await ofrecerPreset(p);
+  }
+
+  // Al elegir un preset: si la ficha está en blanco se aplica directo; si ya
+  // tiene valores capturados, pregunta antes de sobrescribirlos.
+  async function ofrecerPreset(p) {
+    const nuevos = camposPreset(p);
+    const act = valoresActuales();
+    const dif = ['tipo', 'sueldoBase', 'bonos', 'sdi'].filter(k => act[k] !== nuevos[k]);
+    if (dif.length === 0) return;
+
+    if (!act.sueldoBase && !act.bonos && !act.sdi) {
+      aplicarValores(nuevos);
+      toast(`Tabulador de "${p.nombre}" aplicado`, 'ok');
+      return;
+    }
+    const fila = (label, de, a) => h('div', { class: 'tipo-row', style: { gridTemplateColumns: '1fr auto' } }, [
+      h('div', { class: 'muted' }, label),
+      h('div', { class: 'tipo-val' }, [h('span', { class: 'muted' }, de), ' → ', h('b', {}, a)])
+    ]);
+    const ok = await modal({
+      title: `Aplicar el tabulador de "${p.nombre}"`,
+      body: h('div', {}, [
+        h('p', { class: 'muted', style: { fontSize: '12px', marginTop: 0 } },
+          'Este empleado ya tiene valores capturados. ¿Los sobrescribo con los del puesto?'),
+        h('div', { class: 'tipo-breakdown' }, [
+          dif.includes('tipo') && fila('Tipo de personal', tipoPersonalLabel[act.tipo] || '—', tipoPersonalLabel[nuevos.tipo]),
+          dif.includes('sueldoBase') && fila('Sueldo base', money(act.sueldoBase), money(nuevos.sueldoBase)),
+          dif.includes('bonos') && fila('Bono por rendimiento', money(act.bonos), money(nuevos.bonos)),
+          dif.includes('sdi') && fila('SDI', money(act.sdi), money(nuevos.sdi))
+        ].filter(Boolean))
+      ]),
+      confirmLabel: 'Sí, aplicar',
+      cancelLabel: 'Solo cambiar el puesto'
+    });
+    if (ok) aplicarValores(nuevos);
+  }
+  opcionesPuesto();
+
+  // Datos de contacto.
   refs.telefono = h('input', { type: 'tel', value: draft.telefono || '', placeholder: '55 1234 5678' });
   refs.email = h('input', { type: 'email', value: draft.email || '', placeholder: 'correo@ejemplo.com' });
   refs.direccion = h('input', { value: draft.direccion || '', placeholder: 'Calle, número, colonia, ciudad, CP' });
@@ -310,7 +443,8 @@ export async function renderEmpleadoEditor({ params }) {
 
     const data = {
       nombre,
-      puesto: refs.puesto.value.trim() || null,
+      puesto: draft.puesto || null,
+      puestoId: draft.puestoId || null,
       rfc: refs.rfc.value.trim() || null,
       curp: refs.curp.value.trim() || null,
       nss: refs.nss.value.trim() || null,
@@ -391,7 +525,12 @@ export async function renderEmpleadoEditor({ params }) {
       h('h3', {}, 'Datos generales'),
       h('div', { class: 'grid-2' }, [
         h('div', { class: 'field' }, [h('label', {}, 'Nombre *'), refs.nombre]),
-        h('div', { class: 'field' }, [h('label', {}, 'Puesto'), refs.puesto])
+        h('div', { class: 'field' }, [
+          h('label', {}, 'Puesto'),
+          refs.puesto,
+          h('span', { class: 'muted', style: { fontSize: '11px' } },
+            'Elige un puesto del tabulador y se precargan tipo, sueldo, bono y SDI. Puedes ajustarlos abajo para este empleado sin alterar el preset.')
+        ])
       ]),
       h('div', { class: 'grid-3', style: { marginTop: '10px' } }, [
         h('div', { class: 'field' }, [
@@ -488,6 +627,7 @@ function emptyEmpleado() {
   return {
     nombre: '',
     puesto: '',
+    puestoId: null,
     tipo: 'operativo',
     sueldoBase: 0,
     bonos: 0,

@@ -31,6 +31,15 @@ Luego abre http://localhost:8083/
 Cada empleado tiene **obras asignadas con peso configurable** (suma 100%) para
 prorratear su sueldo entre las obras donde participa.
 
+### Puestos (tabulador base)
+`/shared/indirectos/puestos/{id}` = `{ nombre, tipo, sueldoBase, bonos, sdi,
+activo, orden }`. Es un catálogo de presets: al dar de alta un empleado se
+elige el puesto y esos valores se **copian** a su ficha (tipo de personal,
+sueldo base del período, bono por rendimiento y SDI). A partir de ahí el
+empleado es independiente — ajustarlo no toca el preset, y editar el preset no
+reescribe a quienes ya se dieron de alta. Desde la ficha se puede crear un
+puesto nuevo sobre la marcha y decidir si se guarda en el catálogo.
+
 ### Cálculo de nómina
 Todo se calcula aquí. El contador en bitácora **solo deposita**. Cada empleado-período:
 - Sueldo base + días trabajados + horas extra + bonos + prestaciones.

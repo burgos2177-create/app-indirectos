@@ -11,6 +11,7 @@ export function renderHome() {
 
   const cards = [
     card('👷', 'Empleados', 'Alta y catálogo del personal. Obras asignadas y peso de prorrateo.', '/empleados'),
+    card('🧰', 'Puestos', 'Tabulador base: sueldo, bono y SDI por puesto. Se precargan al dar de alta a un empleado.', '/puestos'),
     card('📊', 'Proyección', 'Arma plantillas hipotéticas y proyecta el costo semanal, quincenal, mensual y anual.', '/proyeccion'),
     card('📅', 'Períodos de nómina', '4 carriles: operativo (semanal) + 3 quincenales. Captura días, deducciones, neto.', '/periodos'),
     card('💸', 'Gastos indirectos', 'Captura suelta: oficina, gasolina, etc. Atribución a obra única, prorrateo, o empresa.', '/gastos'),

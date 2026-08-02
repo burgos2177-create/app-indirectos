@@ -5,14 +5,7 @@ import {
   listCategoriasGasto, seedCategoriasGastoSiVacio,
   upsertCategoriaGasto, removeCategoriaGasto
 } from '../services/db.js';
-
-function slug(s) {
-  const acentos = { á: 'a', é: 'e', í: 'i', ó: 'o', ú: 'u', ü: 'u', ñ: 'n' };
-  return (s || '').toString().toLowerCase()
-    .replace(/[áéíóúüñ]/g, ch => acentos[ch] || ch)
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '') || 'categoria';
-}
+import { slug } from '../util/format.js';
 
 export async function renderCategorias() {
   const crumbs = [{ label: 'Inicio', to: '/' }, { label: 'Categorías' }];
@@ -95,7 +88,7 @@ async function categoriaDialog({ cat = null, usadosIds, orden = 1, onDone }) {
     onConfirm: async () => {
       const nom = nombre.value.trim();
       if (!nom) { toast('Nombre obligatorio', 'warn'); return false; }
-      let id = isEdit ? cat.id : slug(nom);
+      let id = isEdit ? cat.id : slug(nom, 'categoria');
       if (!isEdit && usadosIds.has(id)) {
         let i = 2;
         while (usadosIds.has(`${id}_${i}`)) i++;

@@ -172,6 +172,30 @@ export async function removeCategoriaGasto(id) {
   return rremove(`categorias_gasto/${id}`);
 }
 
+// === Puestos (presets de tabulador) ===
+//
+// Un puesto guarda los valores "de tabulador" (tipo de personal, sueldo base
+// por período, bono por rendimiento y SDI) para no recapturarlos en cada alta.
+// Al elegirlo en la ficha del empleado esos valores se COPIAN a la ficha; de
+// ahí en adelante el empleado es independiente: editarlo no reescribe el
+// preset, ni cambiar el preset reescribe a los empleados ya dados de alta.
+//
+// Path: /shared/indirectos/puestos/{puestoId}
+//   { nombre, tipo, sueldoBase, bonos, sdi, activo, orden, createdAt }
+
+export async function listPuestos() {
+  return (await rread('puestos')) || {};
+}
+export async function getPuesto(puestoId) {
+  return await rread(`puestos/${puestoId}`);
+}
+export async function upsertPuesto(puestoId, data) {
+  return rset(`puestos/${puestoId}`, data);
+}
+export async function removePuesto(puestoId) {
+  return rremove(`puestos/${puestoId}`);
+}
+
 // === Empleados (CRUD propio) ===
 
 export async function listEmpleados() {

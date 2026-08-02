@@ -12,6 +12,7 @@ import { renderPeriodos, renderPeriodoDetalle } from './views/periodos.js';
 import { renderGastos } from './views/gastos.js';
 import { renderCargaSocial } from './views/cargasocial.js';
 import { renderCajaChica } from './views/cajachica.js';
+import { renderPuestos } from './views/puestos.js';
 import { renderCategorias } from './views/categorias.js';
 import { renderConfiguracion } from './views/configuracion.js';
 import { h, mount } from './util/dom.js';
@@ -27,6 +28,7 @@ route('/periodos/:id',           (ctx) => renderPeriodoDetalle(ctx));
 route('/gastos',                 () => renderGastos());
 route('/carga-social',           () => renderCargaSocial());
 route('/caja-chica',             (ctx) => renderCajaChica(ctx));
+route('/puestos',                () => renderPuestos());
 route('/categorias',             () => renderCategorias());
 route('/configuracion',          () => renderConfiguracion());
 

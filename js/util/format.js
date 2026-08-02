@@ -31,6 +31,16 @@ export function uid(prefix = '') {
   return prefix + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
 
+// Id legible a partir de un nombre ("Oficial albañil" → "oficial_albanil").
+// Sin regex de diacríticos (mapa explícito) para no depender de Unicode ranges.
+const ACENTOS = { á: 'a', é: 'e', í: 'i', ó: 'o', ú: 'u', ü: 'u', ñ: 'n' };
+export function slug(s, fallback = 'item') {
+  return (s || '').toString().toLowerCase()
+    .replace(/[áéíóúüñ]/g, ch => ACENTOS[ch] || ch)
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || fallback;
+}
+
 export const tipoPersonalLabel = {
   operativo: 'Operativo',
   tecnico_campo: 'Técnico campo',
