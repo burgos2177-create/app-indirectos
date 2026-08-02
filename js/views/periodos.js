@@ -8,7 +8,7 @@ import {
   buzonEstadoActivo
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
-import { money, num0, dateMx, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
+import { money, num0, dateMx, fromInputDate, tipoPersonalLabel, periodicidadDeTipo } from '../util/format.js';
 import { periodoActual } from '../util/calendario.js';
 import { calcularProyeccion } from './escenario.js';
 import { clasificacionDe } from '../util/clasificacion.js';
@@ -56,6 +56,33 @@ function sumaNeto(doc) {
 // La fecha de corte es la fecha límite para liquidar el período.
 const DIA_MS = 86400000;
 const startOfDay = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+// Suma días respetando el calendario local (no aritmética de ms, que se rompe
+// con cambios de horario).
+function shiftDias(ms, n) {
+  const d = new Date(ms);
+  d.setDate(d.getDate() + n);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+const isoLocalDate = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// Fecha de referencia por carril: permite ver/armar un período distinto al que
+// cae hoy. undefined = "el actual". Vive a nivel de módulo para sobrevivir a
+// los re-render de la vista.
+const refPorTipo = {};
+const refDe = (tipo) => refPorTipo[tipo] ? new Date(refPorTipo[tipo]) : new Date();
+
+// Ancla del período anterior/siguiente del mismo carril. Semanal: ±7 días desde
+// el inicio (el fin de semana cae fuera del período, así que no sirve corte+1).
+// Quincenal: el día justo antes del inicio / justo después del corte.
+function anclaVecina(tipo, per, dir) {
+  if (periodicidadDeTipo(tipo) === 'semanal') return shiftDias(per.fechaInicio, dir * 7);
+  return dir > 0 ? shiftDias(per.fechaCorte, 1) : shiftDias(per.fechaInicio, -1);
+}
 
 function vencInfo(vencMs, cerrado) {
   if (!vencMs) return { txt: '—', cls: 'muted' };
@@ -240,15 +267,61 @@ export async function renderPeriodos() {
   const empArr = Object.entries(empleados || {}).map(([id, e]) => ({ id, ...e }));
   const activosAll = empArr.filter(e => e.activo !== false);
 
-  const carriles = TIPOS.map(tipo => {
-    const per = periodoActual(tipo, new Date(), cal);
+  // Datos de un carril para la fecha de referencia vigente de ese tipo.
+  function buildCarril(tipo) {
+    const per = periodoActual(tipo, refDe(tipo), cal);
     const doc = (periodos || {})[per.periodoId] || null;
     const activosArr = empArr.filter(e => e.tipo === tipo && e.activo !== false);
     const proyectado = activosArr.reduce((s, e) => s + (Number(e.sueldoBase) || 0), 0);
-    return { tipo, per, doc, activos: activosArr.length, proyectado };
-  });
+    const actualId = periodoActual(tipo, new Date(), cal).periodoId;
+    return {
+      tipo, per, doc, activos: activosArr.length, proyectado,
+      esActual: per.periodoId === actualId
+    };
+  }
 
-  const cardsWrap = h('div', { class: 'carril-grid' }, carriles.map(c => carrilCard(c)));
+  // Cada carril se repinta solo al navegar, sin recargar toda la vista.
+  function carrilSlot(tipo) {
+    const slot = h('div', { class: 'carril-slot' });
+    const pintar = () => {
+      slot.innerHTML = '';
+      slot.appendChild(carrilCard(buildCarril(tipo), pintar));
+    };
+    pintar();
+    return slot;
+  }
+
+  const cardsWrap = h('div', { class: 'carril-grid' });
+  const pintarTodos = () => {
+    cardsWrap.innerHTML = '';
+    TIPOS.forEach(t => cardsWrap.appendChild(carrilSlot(t)));
+  };
+  pintarTodos();
+
+  // Selector global: lleva los 4 carriles al período que contiene esa fecha.
+  const fechaInput = h('input', {
+    type: 'date', value: isoLocalDate(Date.now()), style: { width: 'auto' },
+    onChange: () => {
+      const ms = fromInputDate(fechaInput.value);
+      if (!ms) return;
+      TIPOS.forEach(t => { refPorTipo[t] = ms; });
+      pintarTodos();
+    }
+  });
+  const selectorRow = h('div', { class: 'row', style: { gap: '10px', flexWrap: 'wrap', margin: '0 0 4px' } }, [
+    h('span', { class: 'muted', style: { fontSize: '12px' } }, 'Ir a la fecha:'),
+    fechaInput,
+    h('button', {
+      class: 'btn ghost sm',
+      onClick: () => {
+        TIPOS.forEach(t => { delete refPorTipo[t]; });
+        fechaInput.value = isoLocalDate(Date.now());
+        pintarTodos();
+      }
+    }, 'Hoy'),
+    h('span', { class: 'muted', style: { fontSize: '11px' } },
+      'Muestra el período de cada carril que contiene esa fecha. Cada carril se mueve también con ◀ ▶.')
+  ]);
 
   // Histórico: todos los períodos guardados, más reciente primero.
   const hist = Object.entries(periodos || {})
@@ -261,7 +334,8 @@ export async function renderPeriodos() {
       'Cuatro carriles independientes. Arma el período, prográmalo con su fecha de liquidación, captura días/deducciones y ciérralo para enviarlo al buzón.'),
     avisosProgramacion(periodos, autoEnviados),
     resumenPlantilla(activosAll, periodos),
-    h('h2', {}, 'Períodos actuales'),
+    h('h2', {}, 'Períodos por carril'),
+    selectorRow,
     cardsWrap,
     h('h2', {}, 'Histórico'),
     hist.length === 0
@@ -308,8 +382,8 @@ function resumenPlantilla(activosAll, periodos) {
   ]);
 }
 
-function carrilCard(c) {
-  const { tipo, per, doc, activos, proyectado } = c;
+function carrilCard(c, repintar) {
+  const { tipo, per, doc, activos, proyectado, esActual } = c;
   const venc = doc ? vencimientoDe(doc) : per.fechaCorte;
   const vi = vencInfo(venc, doc?.estado === 'cerrado');
   const totalNeto = doc ? sumaNeto(doc) : null;
@@ -319,9 +393,21 @@ function carrilCard(c) {
         doc.estado === 'cerrado' ? 'Ver período' : 'Continuar captura')
     : activos === 0
       ? h('button', { class: 'btn sm', disabled: true }, 'Sin personal activo')
-      : h('button', { class: 'btn primary sm', onClick: () => armarPeriodo(tipo) }, '+ Armar período actual');
+      : h('button', { class: 'btn primary sm', onClick: () => armarPeriodo(tipo, refPorTipo[tipo]) },
+          esActual ? '+ Armar período actual' : '+ Armar este período');
 
   const desincronizado = doc && doc.proyectadoBruto != null && Math.abs(Number(doc.proyectadoBruto) - proyectado) > 0.01;
+
+  // Navegación del carril: cada tipo se mueve en su propia periodicidad.
+  const mover = (dir) => { refPorTipo[tipo] = anclaVecina(tipo, per, dir); repintar(); };
+  const nav = h('div', { class: 'carril-nav' }, [
+    h('button', { class: 'btn ghost sm', title: 'Período anterior', onClick: () => mover(-1) }, '◀'),
+    h('div', { class: 'carril-nav-label' + (esActual ? '' : ' otro') }, per.label),
+    esActual
+      ? null
+      : h('button', { class: 'btn ghost sm', title: 'Volver al período actual', onClick: () => { delete refPorTipo[tipo]; repintar(); } }, '⦿'),
+    h('button', { class: 'btn ghost sm', title: 'Período siguiente', onClick: () => mover(1) }, '▶')
+  ]);
 
   return h('div', { class: 'carril-card' }, [
     h('div', { class: 'carril-head' }, [
@@ -331,7 +417,7 @@ function carrilCard(c) {
         h('span', { class: 'tag ' + vi.cls }, vi.txt)
       ])
     ]),
-    h('div', { class: 'muted', style: { fontSize: '12px' } }, per.label),
+    nav,
     h('div', { class: 'carril-meta' }, [
       cm('Personal activo', num0(activos) + ' pers.'),
       cm('Vence', dateMx(venc)),
@@ -399,10 +485,12 @@ function historicoTable(rows) {
   ]);
 }
 
-async function armarPeriodo(tipo) {
+// `refMs` = fecha de referencia del carril (undefined → hoy), para poder armar
+// también períodos pasados o futuros desde el selector.
+async function armarPeriodo(tipo, refMs) {
   try {
     const meta = await getMeta();
-    const per = periodoActual(tipo, new Date(), meta.calendarioSemanal);
+    const per = periodoActual(tipo, refMs ? new Date(refMs) : new Date(), meta.calendarioSemanal);
     const existing = await getPeriodo(per.periodoId);
     if (existing) { navigate('/periodos/' + per.periodoId); return; }
 
