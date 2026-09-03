@@ -3,10 +3,14 @@ import { renderShell } from './shell.js';
 import { state } from '../state/store.js';
 import {
   listObrasLegacy, getCajaChica, getProyectoIdByObraId,
-  reportarGastoCajaChica, depositarCajaChica, borrarMovimientoCajaChica
+  reportarGastoCajaChica, depositarCajaChica, borrarMovimientoCajaChica,
+  nuevoMovimientoIdCajaChica
 } from '../services/db.js';
 import { navigate } from '../state/router.js';
 import { money, dateMx, fromInputDate } from '../util/format.js';
+import {
+  ACCEPT_ATTR, validarComprobante, formatoTamano, subirComprobante, esUrlDeImagen
+} from '../services/comprobantes.js';
 
 const CATEGORIAS = ['Indirecto', 'Material', 'Mano de Obra', 'Subcontratista'];
 
@@ -127,7 +131,8 @@ export async function renderCajaChica({ query } = {}) {
         h('table', { class: 'tbl' }, [
           h('thead', {}, [h('tr', {}, [
             h('th', {}, 'Fecha'), h('th', {}, 'Movimiento'), h('th', { class: 'num' }, 'Monto'),
-            h('th', {}, 'Estado'), h('th', {}, 'Concepto'), h('th', {}, 'Origen'), h('th', {}, '')
+            h('th', {}, 'Estado'), h('th', {}, 'Concepto'), h('th', {}, 'Compr.'),
+            h('th', {}, 'Origen'), h('th', {}, '')
           ])]),
           h('tbody', {}, lista.map(m => movRow(m, obraId, refresh)))
         ])
@@ -201,9 +206,37 @@ function movRow(m, obraId, refresh) {
     ]),
     h('td', {}, estadoTag),
     h('td', {}, m.comentario || h('span', { class: 'muted' }, '—')),
+    h('td', {}, comprobanteCelda(m)),
     h('td', {}, h('span', { class: 'tag ' + (propio ? 'accent' : 'muted') }, m.origen || '—')),
     h('td', {}, acciones)
   ]);
+}
+
+// Miniatura si el comprobante es imagen, enlace 📄 si es PDF. Los movimientos
+// sin comprobanteUrl (todo lo anterior a esta función) muestran '—'.
+function comprobanteCelda(m) {
+  const url = m.comprobanteUrl;
+  if (!url) return h('span', { class: 'muted' }, '—');
+
+  const abrir = h('a', {
+    href: url, target: '_blank', rel: 'noopener',
+    title: 'Abrir comprobante en una pestaña nueva'
+  });
+  if (esUrlDeImagen(url)) {
+    const img = h('img', {
+      src: url, alt: 'Comprobante',
+      style: {
+        width: '38px', height: '38px', objectFit: 'cover', borderRadius: '4px',
+        border: '1px solid var(--border)', display: 'block'
+      },
+      // Si la imagen no carga (permisos, formato raro), degrada a enlace.
+      onError: () => { abrir.innerHTML = ''; abrir.appendChild(document.createTextNode('📄 Ver')); }
+    });
+    abrir.appendChild(img);
+  } else {
+    abrir.appendChild(document.createTextNode('📄 Ver'));
+  }
+  return abrir;
 }
 
 // === Reportar gasto ===
@@ -235,6 +268,30 @@ async function gastoDialog(obraId, refresh, fondo = 'transferencia') {
   categoria.addEventListener('change', renderAmbito);
   renderAmbito();
 
+  // Comprobante (opcional): foto del ticket o PDF de la factura.
+  const comprobanteHint = h('span', { class: 'muted', style: { fontSize: '11px' } },
+    'Opcional. Imagen o PDF, máximo 10 MB.');
+  const comprobante = h('input', {
+    type: 'file', accept: ACCEPT_ATTR,
+    onChange: () => {
+      const f = comprobante.files?.[0];
+      if (!f) {
+        comprobanteHint.textContent = 'Opcional. Imagen o PDF, máximo 10 MB.';
+        comprobanteHint.style.color = '';
+        return;
+      }
+      const err = validarComprobante(f);
+      if (err) {
+        comprobante.value = '';
+        comprobanteHint.textContent = err;
+        comprobanteHint.style.color = 'var(--danger)';
+        return;
+      }
+      comprobanteHint.textContent = `${f.name} · ${formatoTamano(f.size)}`;
+      comprobanteHint.style.color = '';
+    }
+  });
+
   await modal({
     title: fondo === 'efectivo' ? '💵 Reportar gasto · fondo efectivo' : 'Reportar gasto de caja chica',
     size: 'lg',
@@ -250,6 +307,11 @@ async function gastoDialog(obraId, refresh, fondo = 'transferencia') {
         field('Factura', factura),
         field('Categoría sugerida', categoria),
         ambitoWrap
+      ]),
+      h('div', { class: 'field', style: { marginTop: '10px' } }, [
+        h('label', {}, 'Comprobante (foto del ticket o PDF)'),
+        comprobante,
+        comprobanteHint
       ])
     ]),
     confirmLabel: 'Reportar',
@@ -269,6 +331,23 @@ async function gastoDialog(obraId, refresh, fondo = 'transferencia') {
         comentario: comentario.value.trim(), autor, origen: 'indirectos', createdAt: ahora
       };
       if (esEfectivo) mov.fondo = 'efectivo';
+
+      // El comprobante se sube ANTES de escribir en la BD, con el id del
+      // movimiento reservado por adelantado: así el gasto y su item de buzón
+      // siguen publicándose en una sola escritura atómica, ya con la URL. Si la
+      // subida falla no se escribe nada y el diálogo queda abierto para
+      // reintentar (o quitar el archivo y reportar el gasto sin comprobante).
+      const movId = nuevoMovimientoIdCajaChica(obraId);
+      const archivo = comprobante.files?.[0] || null;
+      if (archivo) {
+        try {
+          toast('Subiendo comprobante…');
+          mov.comprobanteUrl = await subirComprobante(obraId, movId, archivo);
+        } catch (err) {
+          toast('No se pudo subir el comprobante: ' + err.message, 'danger');
+          return false;
+        }
+      }
       const item = {
         tipo: 'gasto_caja_chica', origenApp: 'indirectos', obraId,
         proyectoId: proyectoId || null,
@@ -282,7 +361,7 @@ async function gastoDialog(obraId, refresh, fondo = 'transferencia') {
       };
       if (esEfectivo) item.fondo = 'efectivo';
       try {
-        await reportarGastoCajaChica(obraId, mov, item);
+        await reportarGastoCajaChica(obraId, mov, item, movId);
         toast('Gasto reportado', 'ok');
         refresh();
         return true;

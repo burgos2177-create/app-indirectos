@@ -334,10 +334,19 @@ export async function setCajaChicaMeta(obraId, patch) {
   return rupdate(`/shared/cajaChica/${obraId}/meta`, { ...patch, updatedAt: Date.now() });
 }
 
+// Id de movimiento reservado por adelantado. Sirve para nombrar el comprobante
+// en Storage (comprobantes/{obraId}/{movId}.{ext}) ANTES de escribir en la BD,
+// y así seguir publicando el movimiento y su item de buzón en una sola
+// operación atómica.
+export function nuevoMovimientoIdCajaChica(obraId) {
+  return push(_ref(`/shared/cajaChica/${obraId}/movimientos`)).key;
+}
+
 // Reporta un gasto pagado con caja chica: escribe ATÓMICAMENTE (multi-path update
 // en la raíz) el movimiento y su item de buzón, cruzados por id.
-export async function reportarGastoCajaChica(obraId, movBase, itemBase) {
-  const movId = push(_ref(`/shared/cajaChica/${obraId}/movimientos`)).key;
+// `movIdReservado` permite pasar el id obtenido de nuevoMovimientoIdCajaChica.
+export async function reportarGastoCajaChica(obraId, movBase, itemBase, movIdReservado = null) {
+  const movId = movIdReservado || push(_ref(`/shared/cajaChica/${obraId}/movimientos`)).key;
   const itemId = push(_ref('/shared/buzon')).key;
   const updates = {
     [`/shared/cajaChica/${obraId}/movimientos/${movId}`]: { ...movBase, buzonItemId: itemId },

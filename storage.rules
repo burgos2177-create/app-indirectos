@@ -1,0 +1,41 @@
+rules_version = '2';
+
+// Reglas de Firebase Storage del proyecto sogrub-suite.
+//
+// Único uso hoy: comprobantes de gasto de caja chica (foto del ticket o PDF de
+// la factura). La URL de descarga se guarda en el nodo movimiento de la RTDB,
+// en comprobanteUrl — ver docs/CONTRATO-GASTOS.md.
+//
+// Espejo cliente de estos límites: js/services/comprobantes.js.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    // 10 MB y solo imagen o PDF.
+    function archivoValido() {
+      return request.resource.size <= 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
+    }
+
+    // comprobantes/{obraId}/{movimientoId}.{ext}
+    match /comprobantes/{obraId}/{archivo} {
+      allow read: if autenticado();
+      // create y update van separados de delete a propósito: en un borrado
+      // request.resource es null y archivoValido() reventaría.
+      allow create, update: if autenticado() && archivoValido();
+      allow delete: if autenticado();
+    }
+
+    // Storage ya deniega por defecto lo que ninguna regla permite; este bloque
+    // solo lo deja explícito. No revoca el de arriba: las reglas se combinan
+    // con OR, así que basta con que una permita.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
