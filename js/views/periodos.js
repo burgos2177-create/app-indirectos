@@ -34,23 +34,34 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // Cálculo del neto de un empleado-período.
 // Percepciones = sueldo base prorrateado por días + horas extra ($) + bonos + prestaciones.
 // Deducciones  = ISR + IMSS + INFONAVIT + préstamos/otros (manuales).
-function calc(row, diasLaborables) {
+//
+// `prorratearBonos` (bandera del período): al faltar días, si es false solo se
+// descuenta del sueldo base — el bono se paga completo; si es true el descuento
+// aplica también al bono, o sea sobre el total base+bono. Horas extra y
+// prestaciones nunca se prorratean.
+function calc(row, diasLaborables, prorratearBonos = false) {
   const base = Number(row.sueldoBase) || 0;
   const dias = Number(row.diasTrabajados);
   const diasEf = Number.isFinite(dias) ? dias : diasLaborables;
-  const sueldoProp = diasLaborables > 0 ? base * (diasEf / diasLaborables) : base;
+  const factor = diasLaborables > 0 ? diasEf / diasLaborables : 1;
+  const sueldoProp = base * factor;
   const extra = Number(row.horasExtra) || 0;
-  const bonos = row.pagarBono === false ? 0 : (Number(row.bonos) || 0);
+  const bonoPleno = row.pagarBono === false ? 0 : (Number(row.bonos) || 0);
+  const bonos = prorratearBonos ? bonoPleno * factor : bonoPleno;
   const prest = Number(row.prestaciones) || 0;
   const percepciones = sueldoProp + extra + bonos + prest;
   const d = row.deducciones || {};
   const dedTotal = (Number(d.isr) || 0) + (Number(d.imss) || 0) + (Number(d.infonavit) || 0) + (Number(d.prestamos) || 0);
-  return { sueldoProp, percepciones, dedTotal, neto: percepciones - dedTotal };
+  return { sueldoProp, bonos, percepciones, dedTotal, neto: percepciones - dedTotal };
 }
+
+// Bandera del período; ausente = false (comportamiento histórico: solo base).
+const prorrateaBonos = (doc) => doc?.prorratearBonos === true;
 
 function sumaNeto(doc) {
   const diasLab = Number(doc.diasLaborables) || 0;
-  return Object.values(doc.empleados || {}).reduce((s, e) => s + calc(e, diasLab).neto, 0);
+  const pb = prorrateaBonos(doc);
+  return Object.values(doc.empleados || {}).reduce((s, e) => s + calc(e, diasLab, pb).neto, 0);
 }
 
 // La fecha de corte es la fecha límite para liquidar el período.
@@ -124,19 +135,21 @@ function mismoMes(ms, ref) {
 // auto-envío por vencimiento. Devuelve { buzonItemId, totalNeto }.
 async function publicarPeriodo(periodoId, doc, empMap) {
   const diasLab = Number(doc.diasLaborables) || 0;
+  const pb = prorrateaBonos(doc);
   const rows = Object.entries(empMap || {}).map(([empleadoId, e]) => ({ empleadoId, ...e }));
 
   let totalPercep = 0, totalDed = 0, totalNeto = 0, netoSinObra = 0;
   const prorrateoPorObra = {};
   const empSnapshot = {};
   for (const r of rows) {
-    const c = calc(r, diasLab);
+    const c = calc(r, diasLab, pb);
     totalPercep += c.percepciones; totalDed += c.dedTotal; totalNeto += c.neto;
     empSnapshot[r.empleadoId] = {
       nombre: r.nombre, tipo: r.tipo, sueldoBase: Number(r.sueldoBase) || 0,
       diasTrabajados: Number(r.diasTrabajados) || 0, horasExtra: Number(r.horasExtra) || 0,
       bonos: Number(r.bonos) || 0, pagarBono: r.pagarBono !== false,
-      bonoPagado: r.pagarBono === false ? 0 : round2(Number(r.bonos) || 0),
+      // Bono realmente pagado: ya prorrateado si el período lo descuenta.
+      bonoPagado: round2(c.bonos),
       prestaciones: Number(r.prestaciones) || 0,
       deducciones: { ...(r.deducciones || {}) }, obrasAsignadas: r.obrasAsignadas || {},
       percepciones: round2(c.percepciones), deduccionesTotal: round2(c.dedTotal), neto: round2(c.neto)
@@ -529,6 +542,9 @@ async function armarPeriodo(tipo, refMs) {
       fechaVencimiento: per.fechaCorte,   // se debe liquidar a más tardar en el corte
       label: per.label, diasLaborables: per.diasLaborables,
       proyectadoBruto: round2(proyectadoBruto),
+      // Criterio de descuento por días: por defecto solo sobre el sueldo base.
+      // Se cambia con el toggle del detalle del período.
+      prorratearBonos: false,
       estado: 'borrador', empleados: empMap,
       createdAt: Date.now(), updatedAt: Date.now(), createdBy: state.user?.uid || null
     });
@@ -646,6 +662,9 @@ export async function renderPeriodoDetalle({ params }) {
 
   const cerrado = doc.estado === 'cerrado';
   const diasLab = Number(doc.diasLaborables) || 0;
+  // Criterio de descuento por días faltantes. Vive en el período (no global)
+  // para que uno ya cerrado conserve el criterio con que se calculó.
+  let prorrBonos = prorrateaBonos(doc);
 
   const rows = Object.entries(doc.empleados || {}).map(([empleadoId, e]) => ({
     empleadoId,
@@ -679,10 +698,12 @@ export async function renderPeriodoDetalle({ params }) {
     h('div', { class: 'kpi accent' }, [h('span', { class: 'kpi-label' }, 'Neto a pagar'), kNeto])
   ]);
 
+  const thBonos = h('th', { class: 'num' }, 'Bonos');
+
   function recompute() {
     let tP = 0, tD = 0, tN = 0;
     for (const r of rows) {
-      const c = calc(r, diasLab);
+      const c = calc(r, diasLab, prorrBonos);
       if (r._percep) r._percep.textContent = money(c.percepciones);
       if (r._neto) r._neto.textContent = money(c.neto);
       tP += c.percepciones; tD += c.dedTotal; tN += c.neto;
@@ -690,7 +711,37 @@ export async function renderPeriodoDetalle({ params }) {
     kPercep.textContent = money(tP);
     kDed.textContent = money(tD);
     kNeto.textContent = money(tN);
+    thBonos.textContent = prorrBonos ? 'Bonos (a días)' : 'Bonos';
   }
+
+  // === Criterio de descuento por días faltantes ===
+  const prorrChk = h('input', {
+    type: 'checkbox', checked: prorrBonos, disabled: cerrado,
+    onChange: () => aplicarProrrateo(prorrChk.checked)
+  });
+  const prorrHint = h('span', { class: 'muted', style: { fontSize: '11px' } }, '');
+  function pintarHintProrrateo() {
+    prorrHint.textContent = prorrBonos
+      ? 'Un día menos descuenta proporcionalmente del total (base + bono).'
+      : 'Un día menos descuenta solo del sueldo base; el bono se paga completo.';
+  }
+  async function aplicarProrrateo(v) {
+    prorrBonos = !!v;
+    doc.prorratearBonos = prorrBonos;   // publicarPeriodo lee el criterio de `doc`
+    pintarHintProrrateo();
+    recompute();
+    try {
+      await updatePeriodo(periodoId, { prorratearBonos: prorrBonos });
+    } catch (err) {
+      toast('No se pudo guardar el criterio: ' + err.message, 'danger');
+    }
+  }
+  pintarHintProrrateo();
+  const prorrToggle = h('label', {
+    class: 'row',
+    style: { gap: '6px', alignItems: 'center', cursor: cerrado ? 'default' : 'pointer' },
+    title: 'Cómo se aplica el descuento cuando un empleado no cubre todos los días del período'
+  }, [prorrChk, h('span', { style: { fontSize: '12px' } }, 'Descontar días sobre base + bonos')]);
 
   function cellInput(getVal, setVal, extraCls = '') {
     const el = h('input', {
@@ -741,7 +792,7 @@ export async function renderPeriodoDetalle({ params }) {
         h('th', { class: 'num' }, 'Base'),
         h('th', { class: 'num' }, `Días /${diasLab}`),
         h('th', { class: 'num' }, 'H. extra $'),
-        h('th', { class: 'num' }, 'Bonos'),
+        thBonos,
         h('th', { class: 'num' }, 'Prestac.'),
         h('th', { class: 'num' }, 'Percep.'),
         h('th', { class: 'num sep-l' }, 'ISR'),
@@ -902,11 +953,13 @@ export async function renderPeriodoDetalle({ params }) {
         ])
       : null,
     h('div', { class: 'card' }, [
-      h('div', { class: 'row' }, [
+      h('div', { class: 'row', style: { flexWrap: 'wrap' } }, [
         h('h3', { style: { margin: 0 } }, 'Resumen'),
         h('div', { style: { flex: 1 } }),
+        prorrToggle,
         cerrado ? null : h('button', { class: 'btn ghost sm', onClick: actualizarSalarios }, '↻ Actualizar salarios')
       ]),
+      h('div', { style: { marginTop: '4px' } }, prorrHint),
       h('div', { style: { marginTop: '12px' } }, kpiRow)
     ]),
     h('div', { style: { marginTop: '14px' } }, tableCard),

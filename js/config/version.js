@@ -4,4 +4,4 @@
 // es caché del navegador, no un cambio que falte).
 //
 // Convención: AAAA.MM.DD.n — se sube en cada despliegue.
-export const APP_VERSION = '2026.08.02.1';
+export const APP_VERSION = '2026.09.08.1';
