@@ -315,6 +315,9 @@ export async function getCargaSocialMes(mes) {
 export async function setCargaSocialMes(mes, data) {
   return rset(`carga_social/${mes}`, data);
 }
+export async function updateCargaSocialMes(mes, patch) {
+  return rupdate(`carga_social/${mes}`, { ...patch, updatedAt: Date.now() });
+}
 export async function removeCargaSocialMes(mes) {
   return rremove(`carga_social/${mes}`);
 }

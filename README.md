@@ -93,9 +93,35 @@ según el tipo de personal:
 - `tecnico_campo` → indirecto de campo.
 - `tecnico_oficina` / `directivo` → indirecto de oficina.
 
-**Carga social** publica `tipo:"carga_social"` (IMSS mensual + INFONAVIT bimestral),
-un item por bucket de clasificación, con `mes`, `incluyeInfonavit`, `fechaVencimiento`
-(día 17) y `prorrateoPorObra`.
+**Carga social** publica `tipo:"carga_social"`, un item por bucket de clasificación,
+con `mes`, `incluyeBimestral`, `fechaVencimiento`, `desglose {imss, retiro, ceav,
+infonavit}`, `totalSipare`, `cuotaRetenida`, `costoPatronal` y `prorrateoPorObra`.
+
+### Carga social calculada por ley
+No hay captura manual de cuotas: todo se deriva del **SBC** de cada trabajador (su
+SDI, topado a 25 UMA) y de sus **días cotizados** (naturales entre alta y baja,
+inclusive, menos ausentismo e incapacidad). El cálculo vive en `js/util/imss.js`:
+
+- **Parámetros con vigencia** (UMA, salario mínimo, prima de RT). La UMA cambia el
+  1 de febrero y la prima de RT el 1 de marzo; se editan en la tabla `PARAMETROS`.
+  SOGRUB es **Clase V** → prima media **7.58875%**.
+- **Mensual**: EyM cuota fija (20.40% de la UMA), excedente sobre 3 UMA, prestaciones
+  en dinero, gastos médicos de pensionados, Invalidez y Vida, Guarderías y Riesgos
+  de Trabajo.
+- **Bimestral** (cierra en meses pares): Retiro 2%, CEAV con tabla progresiva por
+  SBC en UMA (decreto DOF 16-dic-2020) e INFONAVIT 5%.
+- **Art. 36 LSS**: con salario mínimo el patrón absorbe la cuota obrera. De ahí las
+  tres cifras que la app distingue: `totalSipare` (lo que se deposita al IMSS),
+  `cuotaRetenida` (lo descontado en nómina) y `costoPatronal` = la diferencia.
+- **Calendario**: vence el día 17 del mes siguiente, recorrido al siguiente hábil.
+  El mes determina solo si toca bimestral — no hay checkbox.
+- **Redondeo**: a dos decimales por ramo y por trabajador, como el SUA
+  (`MODO_REDONDEO` en `imss.js`; `'total'` acumula a precisión completa).
+
+El prorrateo a obras usa el **SIPARE completo**, no solo el costo patronal: como la
+nómina carga el NETO a la obra (`monto.importe = totalNeto`), la cuota obrera
+retenida no queda contabilizada en ningún otro lado y `neto + SIPARE` deja el costo
+de obra exacto. Se controla con `BASE_PRORRATEO` en `js/views/cargasocial.js`.
 
 ### Caja chica (fondo físico por obra)
 Fondo compartido por obra en rutas absolutas `/shared/cajaChica/{obraId}` (materiales
