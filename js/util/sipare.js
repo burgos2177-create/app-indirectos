@@ -116,17 +116,26 @@ function parsearResumen(matriz) {
   return { imss: mapa(colIMSS), rcv: mapa(colRCV), pares };
 }
 
-/** Localiza el renglón de encabezados (el que trae "NSS") y mapea columnas. */
-function parsearMovimientos(matriz, columnas) {
+/**
+ * Localiza el renglón de encabezados (el que trae "NSS") y mapea columnas.
+ *
+ * Sin encabezado la hoja se considera VACÍA, no rota: pasa de verdad cuando un
+ * mes no genera emisión mensual (p. ej. todos de baja, así que nadie cotiza
+ * días) y el despacho manda la hoja sin movimientos.
+ */
+function parsearMovimientos(matriz, columnas, opcionales = []) {
   const iCab = matriz.findIndex((f) => (f || []).some((c) => norm(c) === 'nss'));
-  if (iCab < 0) return { filas: [], faltantes: Object.keys(columnas) };
+  if (iCab < 0) return { filas: [], faltantes: [], vacia: true };
 
   const cab = (matriz[iCab] || []).map(norm);
   const idx = {};
   const faltantes = [];
   for (const [clave, etiqueta] of Object.entries(columnas)) {
     const i = cab.indexOf(norm(etiqueta));
-    if (i < 0) faltantes.push(etiqueta); else idx[clave] = i;
+    // Solo se avisa por columnas que cambian algún número; las informativas
+    // (fecha, subtotales que se recalculan) pueden faltar sin consecuencia.
+    if (i < 0) { if (!opcionales.includes(clave)) faltantes.push(etiqueta); }
+    else idx[clave] = i;
   }
 
   const filas = [];
@@ -157,6 +166,7 @@ const COLS_EMA = {
   guarderias: 'Guarderías y Prestaciones Sociales',
   total: 'Total'
 };
+const OPCIONALES_EMA = ['fecha'];
 
 const COLS_EBA = {
   nss: 'NSS', nombre: 'Nombre', fecha: 'Fecha del Movimiento', dias: 'Días',
@@ -170,6 +180,8 @@ const COLS_EBA = {
   subtotalInfonavit: 'Subtotal Infonavit',
   total: 'Total'
 };
+// Subtotales y amortización se recalculan o no se usan: su ausencia no cambia nada.
+const OPCIONALES_EBA = ['fecha', 'subtotalRCV', 'subtotalInfonavit', 'amortizacion'];
 
 const round2 = (n) => Math.round(((Number(n) || 0) + Number.EPSILON) * 100) / 100;
 const suma = (arr, k) => round2(arr.reduce((s, r) => s + (Number(r[k]) || 0), 0));
@@ -192,11 +204,16 @@ export function parseEmision(buffer, XLSX) {
   if (!hEMA) throw new Error('No se encontró la hoja "Movimientos EMA".');
 
   const resumen = parsearResumen(aMatriz(XLSX, hEmision.hoja));
-  const ema = parsearMovimientos(aMatriz(XLSX, hEMA.hoja), COLS_EMA);
-  const eba = hEBA ? parsearMovimientos(aMatriz(XLSX, hEBA.hoja), COLS_EBA) : { filas: [], faltantes: [] };
+  const ema = parsearMovimientos(aMatriz(XLSX, hEMA.hoja), COLS_EMA, OPCIONALES_EMA);
+  const eba = hEBA
+    ? parsearMovimientos(aMatriz(XLSX, hEBA.hoja), COLS_EBA, OPCIONALES_EBA)
+    : { filas: [], faltantes: [] };
 
   if (ema.faltantes.length) advertencias.push(`Hoja EMA: no se encontraron las columnas ${ema.faltantes.join(', ')}.`);
   if (hEBA && eba.faltantes.length) advertencias.push(`Hoja EBA: no se encontraron las columnas ${eba.faltantes.join(', ')}.`);
+  if (ema.vacia && eba.vacia) {
+    throw new Error('El archivo no trae movimientos ni en EMA ni en EBA. ¿Es el desglose correcto?');
+  }
 
   const periodoTexto = texto(resumen.imss['periodo mensual']);
   const mes = mesISODe(periodoTexto, hEmision.nombre);
