@@ -6,12 +6,14 @@
 // separación voluntaria (sin indemnización). Estimado orientativo.
 
 import { periodicidadDeTipo } from './format.js';
+import { parametrosVigentes } from './imss.js';
 
 const DIA_MS = 86400000;
 
-// Salario mínimo general diario (zona general). Se usa para topar la prima de
-// antigüedad (2× mínimo). Ajustar al año en curso.
-export const SALARIO_MINIMO_DIARIO = 278.80;
+// El salario mínimo (para topar la prima de antigüedad a 2× mínimo) sale de la
+// tabla con vigencia de js/util/imss.js — misma fuente que usa la carga social.
+// Se toma el vigente a la fecha de cálculo, que es el que aplica al pago.
+export const salarioMinimoEn = (fecha = Date.now()) => parametrosVigentes(fecha).salarioMinimo;
 const PRIMA_VACACIONAL = 0.25;
 const DIAS_AGUINALDO = 15;
 
@@ -70,14 +72,15 @@ export function calcularFiniquito(empleado, hasta = Date.now()) {
   // === Componentes de LIQUIDACIÓN (despido injustificado) con SDI ===
   const indemnizacion90 = 90 * sdi;                 // 3 meses constitucionales
   const veinteDias = 20 * anios * sdi;              // 20 días por año de servicio
-  const salarioTopado = Math.min(sd, 2 * SALARIO_MINIMO_DIARIO);
+  const salarioMinimo = salarioMinimoEn(hasta);
+  const salarioTopado = Math.min(sd, 2 * salarioMinimo);
   const primaAntiguedad = 12 * anios * salarioTopado; // 12 días/año, tope 2× mínimo
   const totalLiquidacion = totalFiniquito + indemnizacion90 + veinteDias + primaAntiguedad;
 
   return {
     salarioDiario: sd,
     factorIntegracion, sdi, sdiManual,
-    salarioMinimo: SALARIO_MINIMO_DIARIO, salarioTopado,
+    salarioMinimo, salarioTopado,
     diasAntiguedad: diasAntig, anios,
     // finiquito (voluntario, con SD)
     diasAguinaldo: DIAS_AGUINALDO, aguinaldo,

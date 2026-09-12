@@ -26,9 +26,20 @@ export const PARAMETROS = [
   { desde: '2026-02-01', umaDiaria: 117.31, salarioMinimo: 315.04, primaRT: 0.0758875, nota: 'UMA vigente 01-feb-2026 a 31-ene-2027' }
 ];
 
-/** Parámetros vigentes en una fecha 'YYYY-MM-DD' (o 'YYYY-MM', que toma el día 1). */
-export function parametrosVigentes(fechaISO) {
-  const f = (fechaISO || '').length === 7 ? `${fechaISO}-01` : String(fechaISO || '');
+/**
+ * Parámetros vigentes en una fecha. Acepta 'YYYY-MM-DD', 'YYYY-MM' (toma el día
+ * 1), un Date o un epoch ms.
+ */
+export function parametrosVigentes(fecha) {
+  let iso;
+  if (typeof fecha === 'number' || fecha instanceof Date) {
+    const d = new Date(fecha);
+    const p = (n) => String(n).padStart(2, '0');
+    iso = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  } else {
+    iso = String(fecha || '');
+  }
+  const f = iso.length === 7 ? `${iso}-01` : iso;
   let vig = PARAMETROS[0];
   for (const p of PARAMETROS) if (p.desde <= f) vig = p;
   return {

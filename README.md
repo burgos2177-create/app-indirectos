@@ -102,7 +102,9 @@ No hay captura manual de cuotas: todo se deriva del **SBC** de cada trabajador (
 SDI, topado a 25 UMA) y de sus **días cotizados** (naturales entre alta y baja,
 inclusive, menos ausentismo e incapacidad). El cálculo vive en `js/util/imss.js`:
 
-- **Parámetros con vigencia** (UMA, salario mínimo, prima de RT). La UMA cambia el
+- **Parámetros con vigencia** (UMA, salario mínimo, prima de RT) — fuente única de
+  la app: el cálculo de finiquito toma de aquí el salario mínimo con el que topa la
+  prima de antigüedad (2× mínimo), según la fecha de cálculo. La UMA cambia el
   1 de febrero y la prima de RT el 1 de marzo; se editan en la tabla `PARAMETROS`.
   SOGRUB es **Clase V** → prima media **7.58875%**.
 - **Mensual**: EyM cuota fija (20.40% de la UMA), excedente sobre 3 UMA, prestaciones
