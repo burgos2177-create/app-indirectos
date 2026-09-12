@@ -4,7 +4,7 @@ import { state } from '../state/store.js';
 import {
   listEmpleados,
   pushBuzonItem, getBuzonItem, deleteBuzonItem,
-  getCargaSocialMes, setCargaSocialMes, updateCargaSocialMes, removeCargaSocialMes,
+  getCargaSocialMes, updateCargaSocialMes, removeCargaSocialMes,
   getProyectoIdByObraId, buzonEstadoActivo
 } from '../services/db.js';
 import { money, num, num0, dateMx, tipoPersonalLabel } from '../util/format.js';
@@ -15,6 +15,7 @@ import {
   inicioMes, finMes, rangoBimestre, cierraBimestre, vencimientoCuotas,
   MODO_REDONDEO, round2
 } from '../util/imss.js';
+import { cargarSheetJS, parseEmision, emparejar } from '../util/sipare.js';
 
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
@@ -61,6 +62,10 @@ export async function renderCargaSocial() {
   let ausencias = {};        // empleadoId → días de ausentismo/incapacidad del mes
   let ausenciasPrevias = {}; // ídem del mes impar del bimestre (para la base bimestral)
   let filas = [];            // cálculo vivo por empleado
+  // Emisión oficial del despacho (la que genera la línea de captura SIPARE).
+  // Cuando existe manda ella: es el monto exacto que se va a pagar.
+  let emision = null;
+  let modo = 'estimado';     // 'estimado' | 'oficial'
 
   // ===== Cálculo del mes =====
   function calcularMes() {
@@ -309,7 +314,273 @@ export async function renderCargaSocial() {
     });
   }
 
+  // ===== Emisión oficial (desglose del despacho → línea de captura SIPARE) =====
+
+  /** Trabajadores de la emisión ya emparejados con el catálogo de empleados. */
+  function emisionEmparejada() {
+    if (!emision) return [];
+    return emparejar(emision.trabajadores || [], empById).map((t) => {
+      const emp = t.empleadoId ? empById[t.empleadoId] : null;
+      const f = filas.find((x) => x.id === t.empleadoId) || null;
+      return {
+        ...t,
+        emp,
+        clasif: emp ? clasificacionDe(emp.tipo) : null,
+        obrasAsignadas: emp?.obrasAsignadas || {},
+        // El art. 36 no viene en el archivo; se toma del cálculo de la app.
+        art36: f ? f.cuotas.art36 : false,
+        estimado: f ? f.cuotas.totalSipare : null
+      };
+    });
+  }
+
+  async function importarEmisionDialog() {
+    const archivo = h('input', { type: 'file', accept: '.xls,.xlsx,.xlsm' });
+    const estado = h('div', { class: 'muted', style: { fontSize: '12px', marginTop: '10px' } },
+      'Selecciona el archivo tal como lo manda la contadora; no hace falta editarlo.');
+    const previa = h('div', { style: { marginTop: '12px' } });
+    let parseada = null;
+
+    archivo.addEventListener('change', async () => {
+      const f = archivo.files?.[0];
+      previa.innerHTML = '';
+      parseada = null;
+      if (!f) return;
+      estado.textContent = 'Leyendo el archivo…';
+      try {
+        const XLSX = await cargarSheetJS();
+        const buf = await f.arrayBuffer();
+        const e = parseEmision(buf, XLSX);
+        parseada = { ...e, archivo: f.name };
+        estado.textContent = `${f.name} · ${(f.size / 1024).toFixed(0)} KB`;
+        previa.appendChild(vistaPrevia(parseada));
+      } catch (err) {
+        estado.textContent = 'No se pudo leer: ' + err.message;
+        estado.style.color = 'var(--danger)';
+      }
+    });
+
+    await modal({
+      title: 'Importar emisión del IMSS',
+      size: 'lg',
+      body: h('div', {}, [
+        h('p', { class: 'muted', style: { fontSize: '12px', marginTop: 0 } },
+          'Es el "Desglose de trabajadores" que manda el despacho: el mismo que genera la línea de captura SIPARE. Al importarlo, el módulo usa esas cifras exactas en vez de la estimación.'),
+        h('div', { class: 'field' }, [h('label', {}, 'Archivo (.xls / .xlsx)'), archivo]),
+        estado,
+        previa
+      ]),
+      confirmLabel: 'Importar',
+      onConfirm: async () => {
+        if (!parseada) { toast('Primero elige un archivo válido', 'warn'); return false; }
+        if (parseada.mes && parseada.mes !== mesSel) {
+          const ok = await modal({
+            title: 'El mes no coincide',
+            body: `La emisión es de ${mesLabel(parseada.mes)} y estás viendo ${mesLabel(mesSel)}. ¿Cambio al mes de la emisión?`,
+            confirmLabel: 'Sí, ir a ' + mesLabel(parseada.mes)
+          });
+          if (!ok) return false;
+          mesSel = parseada.mes;
+          mesInput.value = mesSel;
+        }
+        try {
+          const guardada = {
+            ...parseada,
+            importadoAt: Date.now(),
+            importadoPor: state.user?.uid || null
+          };
+          await updateCargaSocialMes(mesSel, { emision: guardada });
+          toast('Emisión importada', 'ok');
+          await recargarMes();
+          return true;
+        } catch (err) { toast('Error: ' + err.message, 'danger'); return false; }
+      }
+    });
+  }
+
+  function vistaPrevia(e) {
+    const dato = (l, v) => h('div', { class: 'kpi' }, [
+      h('span', { class: 'kpi-label' }, l), h('span', { class: 'kpi-value' }, v)
+    ]);
+    const sinEmparejar = emparejar(e.trabajadores || [], empById).filter((t) => !t.empleadoId);
+    return h('div', {}, [
+      h('div', { class: 'kpi-row' }, [
+        dato('Período', e.mes ? mesLabel(e.mes) : (e.meta.periodoTexto || '—')),
+        dato('Cotizantes', num0(e.trabajadores.length)),
+        dato('IMSS', money(e.totalIMSS)),
+        dato('RCV + INFONAVIT', money(e.totalRCV)),
+        dato('Total SIPARE', money(e.totalSipare))
+      ]),
+      h('p', { class: 'muted', style: { fontSize: '11px', margin: '8px 0 0' } },
+        `Registro patronal ${e.meta.registroPatronal || '—'} · propuesta IMSS ${e.meta.propuestaIMSS || '—'} · prima RT ${e.meta.primaRT || '—'}% · ${num0(e.meta.diasEmision)} días cotizados`),
+      e.advertencias.length
+        ? h('div', { class: 'readonly-banner', style: { marginTop: '10px', background: 'rgba(245,196,81,.08)', borderColor: 'rgba(245,196,81,.35)' } }, [
+            h('span', { class: 'tag warn' }, 'Revisar'),
+            h('span', {}, e.advertencias.join(' '))
+          ])
+        : null,
+      sinEmparejar.length
+        ? h('div', { class: 'readonly-banner', style: { marginTop: '10px', background: 'rgba(245,196,81,.08)', borderColor: 'rgba(245,196,81,.35)' } }, [
+            h('span', { class: 'tag warn' }, `${sinEmparejar.length} sin emparejar`),
+            h('span', {}, `No se encontró en el catálogo: ${sinEmparejar.map((t) => `${t.nombre} (NSS ${t.nss})`).join(', ')}. Captura el NSS en su ficha para que empaten.`)
+          ])
+        : null
+    ]);
+  }
+
+  async function quitarEmision() {
+    const ok = await modal({
+      title: 'Quitar la emisión importada',
+      body: `Se borrará la emisión de ${mesLabel(mesSel)} y el módulo volverá a la estimación calculada. Los movimientos ya enviados al buzón no se tocan.`,
+      confirmLabel: 'Quitar', danger: true
+    });
+    if (!ok) return;
+    try {
+      await updateCargaSocialMes(mesSel, { emision: null });
+      toast('Emisión quitada', 'ok');
+      await recargarMes();
+    } catch (err) { toast('Error: ' + err.message, 'danger'); }
+  }
+
+  /** Conciliación estimado (app) vs emisión oficial, por concepto. */
+  function tarjetaConciliacion(t) {
+    if (!emision) return null;
+    const r = emision.resumen;
+    const conBimestre = cierraBimestre(mesSel);
+    const filasComp = [
+      ['IMSS (mensual)', t.imss, emision.totalIMSS],
+      ['Retiro', t.retiro, r.rcv.retiro],
+      ['CEAV', t.ceav, r.rcv.ceavPatron + r.rcv.ceavObrero],
+      ['INFONAVIT', t.infonavit, r.rcv.infonavit],
+      ['Total SIPARE', t.sipare, emision.totalSipare]
+    ].filter(([, , of]) => conBimestre || of > 0 || true);
+
+    return h('div', { class: 'card' }, [
+      h('h3', {}, 'Conciliación · estimado vs emisión'),
+      h('table', { class: 'tbl' }, [
+        h('thead', {}, [h('tr', {}, [
+          h('th', {}, 'Concepto'),
+          h('th', { class: 'num' }, 'Estimado (app)'),
+          h('th', { class: 'num' }, 'Emisión (IMSS)'),
+          h('th', { class: 'num' }, 'Diferencia')
+        ])]),
+        h('tbody', {}, filasComp.map(([label, est, ofi], i) => {
+          const d = ofi - est;
+          const grande = Math.abs(d) > Math.max(1, ofi * 0.01);
+          return h('tr', { style: i === filasComp.length - 1 ? { fontWeight: '600' } : {} }, [
+            h('td', {}, label),
+            h('td', { class: 'num muted' }, money(est)),
+            h('td', { class: 'num' }, money(ofi)),
+            h('td', { class: 'num' }, h('span', { style: { color: grande ? 'var(--warn)' : 'var(--text-2)' } },
+              (d >= 0 ? '+' : '') + money(d)))
+          ]);
+        }))
+      ]),
+      h('p', { class: 'muted', style: { fontSize: '11px', margin: '10px 0 0' } },
+        'La estimación usa el SDI y los días de la ficha de cada empleado; la emisión usa los movimientos que el despacho dio de alta ante el IMSS. Las diferencias suelen venir de altas, bajas o modificaciones de salario que la app todavía no tiene.')
+    ]);
+  }
+
+  function tablaOficial() {
+    const lista = emisionEmparejada();
+    const conBim = emision.incluyeBimestral;
+    return h('div', { class: 'card', style: { padding: 0, overflow: 'auto' } }, [
+      h('table', { class: 'tbl' }, [
+        h('thead', {}, [h('tr', {}, [
+          h('th', {}, 'Trabajador (emisión)'),
+          h('th', {}, 'Clasificación'),
+          h('th', { class: 'num' }, 'SBC'),
+          h('th', { class: 'num' }, 'Días'),
+          h('th', { class: 'num sep-l' }, 'IMSS'),
+          h('th', { class: 'num' }, conBim ? 'RCV + INFO' : 'RCV + INFO'),
+          h('th', { class: 'num' }, 'Total'),
+          h('th', { class: 'num' }, 'Patrón'),
+          h('th', { class: 'num' }, 'Obrero'),
+          h('th', { class: 'num' }, 'Estimado app')
+        ])]),
+        h('tbody', {}, lista.map((t) => {
+          const dif = t.estimado != null ? t.total - t.estimado : null;
+          return h('tr', {}, [
+            h('td', {}, [
+              h('b', {}, t.nombre),
+              h('div', { class: 'mono muted', style: { fontSize: '10px' } }, 'NSS ' + t.nss),
+              t.empleadoId
+                ? (t.via === 'nombre' ? h('span', { class: 'tag', style: { fontSize: '9px' } }, 'empatado por nombre') : null)
+                : h('span', { class: 'tag warn', style: { fontSize: '9px' } }, 'sin emparejar')
+            ]),
+            h('td', {}, t.clasif
+              ? h('span', { class: 'tag ' + (t.clasif.clasificacion === 'directo' ? 'ok' : t.clasif.ambito === 'campo' ? 'warn' : '') }, t.clasif.label)
+              : h('span', { class: 'muted' }, '—')),
+            h('td', { class: 'num muted' }, money(t.sbc)),
+            h('td', { class: 'num' }, num0(t.diasEMA)),
+            h('td', { class: 'num sep-l' }, money(t.imss)),
+            h('td', { class: 'num' }, conBim ? money(t.bimestral) : h('span', { class: 'muted' }, '—')),
+            h('td', { class: 'neto' }, money(t.total)),
+            h('td', { class: 'num muted' }, money(t.patron)),
+            h('td', { class: 'num muted' }, money(t.obrero)),
+            h('td', { class: 'num muted' }, t.estimado != null
+              ? h('span', { title: `Diferencia ${money(dif)}` }, money(t.estimado))
+              : '—')
+          ]);
+        }))
+      ])
+    ]);
+  }
+
   // ===== Envío al buzón =====
+
+  /**
+   * Buckets con las cifras EXACTAS de la emisión. La cuota obrera retenida no
+   * se prorratea distinto: se reparte el total igual que en el modo estimado
+   * (ver BASE_PRORRATEO).
+   */
+  function construirBucketsOficiales() {
+    const lista = emisionEmparejada();
+    const sinEmparejar = lista.filter((t) => !t.empleadoId);
+    if (sinEmparejar.length) {
+      return { error: sinEmparejar };
+    }
+    const buckets = {};
+    for (const t of lista) {
+      const monto = BASE_PRORRATEO === 'sipare' ? t.total : t.patron;
+      if (monto <= 0) continue;
+      const c = t.clasif;
+      const key = c.clasificacion + '|' + (c.ambito || '');
+      if (!buckets[key]) {
+        buckets[key] = {
+          clasificacion: c.clasificacion, ambito: c.ambito, label: c.label,
+          importe: 0, sipare: 0, retenido: 0, costoPatronal: 0,
+          imss: 0, retiro: 0, ceav: 0, infonavit: 0,
+          porObra: {}, sinObra: 0, empleados: []
+        };
+      }
+      const b = buckets[key];
+      const retenido = t.art36 ? 0 : t.obrero;
+      b.importe += monto;
+      b.sipare += t.total;
+      b.retenido += retenido;
+      b.costoPatronal += t.total - retenido;
+      b.imss += t.imss; b.retiro += t.retiro; b.ceav += t.ceav; b.infonavit += t.infonavit;
+      b.empleados.push({
+        empleadoId: t.empleadoId, nombre: t.nombre, nss: t.nss,
+        sbc: t.sbc, diasCotizados: t.diasEMA,
+        imss: t.imss, retiro: t.retiro, ceav: t.ceav, infonavit: t.infonavit,
+        totalSipare: t.total, cuotaRetenida: round2(retenido),
+        costoPatronal: round2(t.total - retenido), art36: t.art36
+      });
+      const oa = t.obrasAsignadas || {};
+      const ids = Object.keys(oa);
+      if (ids.length === 0) { b.sinObra += monto; continue; }
+      const sp = ids.reduce((s, id) => s + (Number(oa[id]?.peso) || 0), 0);
+      for (const id of ids) {
+        const peso = Number(oa[id]?.peso) || 0;
+        const frac = sp > 0 ? peso / sp : 1 / ids.length;
+        b.porObra[id] = (b.porObra[id] || 0) + monto * frac;
+      }
+    }
+    return { buckets: Object.values(buckets) };
+  }
+
   function construirBuckets() {
     const buckets = {};
     for (const f of filas) {
@@ -374,14 +645,56 @@ export async function renderCargaSocial() {
   }
 
   async function enviarAlBuzon() {
-    const conBimestre = cierraBimestre(mesSel);
-    const buckets = construirBuckets();
+    const oficial = modo === 'oficial' && !!emision;
+    const conBimestre = oficial ? emision.incluyeBimestral : cierraBimestre(mesSel);
+
+    let buckets;
+    if (oficial) {
+      const r = construirBucketsOficiales();
+      if (r.error) {
+        await modal({
+          title: 'Faltan trabajadores por emparejar',
+          body: h('div', {}, [
+            h('p', {}, 'La emisión trae trabajadores que no están en el catálogo de empleados. Sin emparejarlos no se puede saber su clasificación contable ni a qué obra prorratear.'),
+            h('ul', {}, r.error.map((t) => h('li', {}, `${t.nombre} — NSS ${t.nss}`))),
+            h('p', { class: 'muted', style: { fontSize: '12px' } },
+              'Captura el NSS en la ficha de cada uno (Empleados → NSS) y vuelve a intentar. También empatan por nombre completo.')
+          ]),
+          confirmLabel: 'Entendido'
+        });
+        return;
+      }
+      buckets = r.buckets;
+    } else {
+      buckets = construirBuckets();
+    }
     if (buckets.length === 0) { toast('No hay cuotas que enviar este mes', 'warn'); return; }
+
     const venc = vencimientoCuotas(mesSel);
-    const t = totales();
+    const t = oficial
+      ? {
+          imss: emision.totalIMSS,
+          retiro: emision.resumen.rcv.retiro,
+          ceav: emision.resumen.rcv.ceavPatron + emision.resumen.rcv.ceavObrero,
+          infonavit: emision.resumen.rcv.infonavit,
+          sipare: round2(buckets.reduce((s, b) => s + b.sipare, 0)),
+          retenido: round2(buckets.reduce((s, b) => s + b.retenido, 0)),
+          costoPatronal: round2(buckets.reduce((s, b) => s + b.costoPatronal, 0))
+        }
+      : totales();
+
     const ok = await modal({
-      title: 'Enviar carga social al buzón',
+      title: oficial ? 'Enviar la emisión oficial al buzón' : 'Enviar carga social (estimada) al buzón',
       body: h('div', {}, [
+        oficial
+          ? h('div', { class: 'readonly-banner', style: { marginBottom: '10px' } }, [
+              h('span', { class: 'tag ok' }, 'Emisión oficial'),
+              h('span', {}, `Cifras exactas del desglose del despacho (propuesta IMSS ${emision.meta.propuestaIMSS || '—'}). Es el monto de la línea de captura SIPARE.`)
+            ])
+          : h('div', { class: 'readonly-banner', style: { marginBottom: '10px', background: 'rgba(245,196,81,.08)', borderColor: 'rgba(245,196,81,.35)' } }, [
+              h('span', { class: 'tag warn' }, 'Estimado'),
+              h('span', {}, 'Son cuotas calculadas por la app, no la emisión del IMSS. Si ya tienes el archivo del despacho, impórtalo antes de enviar.')
+            ]),
         h('p', {}, `Se enviarán ${buckets.length} movimiento(s) de ${mesLabel(mesSel)} al buzón de contabilidad, separados por clasificación contable (${buckets.map(b => b.label).join(', ')}).`),
         h('div', { class: 'tipo-breakdown' }, [
           h('div', { class: 'tipo-row', style: { gridTemplateColumns: '1fr auto' } }, [
@@ -415,12 +728,19 @@ export async function renderCargaSocial() {
         const item = {
           tipo: 'carga_social', origenApp: 'indirectos', estado: 'recibido',
           creadoPor: state.user?.uid || null,
-          concepto: `Carga social ${mesLabel(mesSel)} · ${b.label}${conBimestre ? ' (IMSS + RCV/INFONAVIT)' : ' (IMSS)'}`,
+          concepto: `Carga social ${mesLabel(mesSel)} · ${b.label}${conBimestre ? ' (IMSS + RCV/INFONAVIT)' : ' (IMSS)'}${oficial ? ' · emisión IMSS' : ' · estimado'}`,
           fecha: `${mesSel}-01`,
           fechaVencimiento: venc,
           monto: { subtotal: round2(b.importe), iva: 0, importe: round2(b.importe) },
           clasificacion: b.clasificacion, ambito: b.ambito,
           mes: mesSel,
+          fuente: oficial ? 'emision_imss' : 'estimado',
+          ...(oficial ? {
+            registroPatronal: emision.meta.registroPatronal || null,
+            propuestaIMSS: emision.meta.propuestaIMSS || null,
+            propuestaRCV: emision.meta.propuestaRCV || null,
+            archivoEmision: emision.archivo || null
+          } : {}),
           incluyeBimestral: conBimestre,
           incluyeInfonavit: conBimestre,     // compatibilidad con lo que ya lee bitácora
           desglose: {
@@ -436,9 +756,11 @@ export async function renderCargaSocial() {
         };
         ids.push(await pushBuzonItem(item));
       }
-      await setCargaSocialMes(mesSel, {
+      // update (no set) para no borrar la emisión importada.
+      await updateCargaSocialMes(mesSel, {
         enviadaAt: Date.now(), buzonItemIds: ids,
         incluyeBimestral: conBimestre,
+        fuente: oficial ? 'emision_imss' : 'estimado',
         ausencias: Object.fromEntries(Object.entries(ausencias).filter(([, v]) => Number(v) > 0)),
         totalSipare: round2(t.sipare), cuotaRetenida: round2(t.retenido), costoPatronal: round2(t.costoPatronal),
         enviadaPor: state.user?.uid || null
@@ -492,10 +814,42 @@ export async function renderCargaSocial() {
   }
 
   // ===== Repintado =====
+  const emisionBanner = h('div', {});
+  const conciliacionWrap = h('div', {});
+
+  function pintarEmisionBanner() {
+    emisionBanner.innerHTML = '';
+    if (!emision) {
+      emisionBanner.appendChild(h('div', { class: 'readonly-banner', style: { background: 'rgba(245,196,81,.08)', borderColor: 'rgba(245,196,81,.35)' } }, [
+        h('span', { class: 'tag warn' }, 'Estimado'),
+        h('span', {}, `Todavía no se importa la emisión de ${mesLabel(mesSel)}. Lo que ves es el cálculo de la app; sirve para presupuestar, pero el monto exacto a pagar sale del desglose del despacho.`),
+        h('div', { style: { flex: 1 } }),
+        h('button', { class: 'btn sm primary', onClick: importarEmisionDialog }, '📄 Importar emisión')
+      ]));
+      return;
+    }
+    const pill = (m, label) => h('button', {
+      class: 'btn sm' + (modo === m ? ' primary' : ''),
+      style: modo === m ? {} : { opacity: '.75' },
+      onClick: () => { modo = m; repintar(); }
+    }, label);
+    emisionBanner.appendChild(h('div', { class: 'readonly-banner' }, [
+      h('span', { class: 'tag ok' }, 'Emisión oficial'),
+      h('span', {}, `${emision.archivo || 'Desglose del despacho'} · ${num0(emision.trabajadores.length)} cotizantes · SIPARE ${money(emision.totalSipare)} · importada el ${dateMx(emision.importadoAt)}.`),
+      h('div', { style: { flex: 1 } }),
+      h('div', { class: 'row', style: { gap: '6px' } }, [
+        pill('oficial', 'Emisión'),
+        pill('estimado', 'Estimado app'),
+        h('button', { class: 'btn sm ghost danger', onClick: quitarEmision }, '✕')
+      ])
+    ]));
+  }
+
   function repintar() {
     const { params, bim, conBimestre } = calcularMes();
-    const t = totales();
+    const tEst = totales();
     const venc = vencimientoCuotas(mesSel);
+    const oficial = modo === 'oficial' && !!emision;
 
     bimBadge.textContent = conBimestre
       ? `Cierra bimestre ${bim.label} · IMSS + RCV + INFONAVIT`
@@ -504,10 +858,41 @@ export async function renderCargaSocial() {
     vencBadge.textContent = `Vence ${dateMx(venc)}`;
     vencBadge.className = 'tag';
 
+    // En modo oficial los totales salen de la emisión.
+    const t = oficial
+      ? (() => {
+          const lista = emisionEmparejada();
+          const retenido = lista.reduce((s, x) => s + (x.art36 ? 0 : x.obrero), 0);
+          const r = emision.resumen.rcv;
+          return {
+            conCuota: lista.length,
+            imss: emision.totalIMSS,
+            retiro: r.retiro, ceav: r.ceavPatron + r.ceavObrero, infonavit: r.infonavit,
+            patron: emision.totalPatron, obrero: emision.totalObrero,
+            sipare: emision.totalSipare,
+            retenido: round2(retenido),
+            costoPatronal: round2(emision.totalSipare - retenido)
+          };
+        })()
+      : tEst;
+
+    pintarEmisionBanner();
     pintarParametros(params);
-    pintarKpis(t, conBimestre);
-    pintarDesglose(t, conBimestre, venc, bim);
-    pintarTabla(conBimestre);
+    pintarKpis(t, oficial ? emision.incluyeBimestral : conBimestre);
+    pintarDesglose(t, oficial ? emision.incluyeBimestral : conBimestre, venc, bim);
+
+    tablaWrap.innerHTML = '';
+    if (oficial) tablaWrap.appendChild(tablaOficial());
+    else pintarTabla(conBimestre);
+
+    conciliacionWrap.innerHTML = '';
+    if (emision) {
+      const card = tarjetaConciliacion(tEst);
+      if (card) conciliacionWrap.appendChild(card);
+    }
+
+    guardarBtn.style.display = oficial ? 'none' : '';
+    enviarBtn.textContent = oficial ? 'Enviar emisión al buzón' : 'Enviar estimado al buzón';
   }
 
   async function recargarMes() {
@@ -517,6 +902,8 @@ export async function renderCargaSocial() {
     if (mesPrev) { try { prev = await getCargaSocialMes(mesPrev); } catch { prev = null; } }
     ausencias = { ...(rec?.ausencias || {}) };
     ausenciasPrevias = { ...(prev?.ausencias || {}) };
+    emision = rec?.emision || null;
+    modo = emision ? 'oficial' : 'estimado';
     repintar();
     await refreshEnviada();
   }
@@ -528,13 +915,17 @@ export async function renderCargaSocial() {
       'Calculado conforme a la Ley del Seguro Social y a la Ley del INFONAVIT a partir del SBC de cada trabajador (su SDI, topado a 25 UMA) y de sus días cotizados. No hay captura manual de cuotas: lo único que se captura son los días de ausentismo e incapacidad.'),
     h('div', { class: 'row', style: { marginBottom: '16px', gap: '12px', flexWrap: 'wrap' } }, [
       h('div', { class: 'field', style: { maxWidth: '180px' } }, [h('label', {}, 'Mes'), mesInput]),
-      h('div', { class: 'row', style: { gap: '6px', marginTop: '18px' } }, [bimBadge, vencBadge])
+      h('div', { class: 'row', style: { gap: '6px', marginTop: '18px' } }, [bimBadge, vencBadge]),
+      h('div', { style: { flex: 1 } }),
+      h('button', { class: 'btn', style: { marginTop: '18px' }, onClick: importarEmisionDialog }, '📄 Importar emisión')
     ]),
+    emisionBanner,
     enviadaBanner,
     kpiWrap,
     h('div', { style: { marginTop: '14px' } }, paramsCard),
     h('div', { style: { marginTop: '14px' } }, tablaWrap),
     h('div', { style: { marginTop: '14px' } }, desgloseCard),
+    h('div', { style: { marginTop: '14px' } }, conciliacionWrap),
     h('div', { class: 'row', style: { marginTop: '14px', justifyContent: 'flex-end' } }, [guardarBtn, quitarBtn, enviarBtn])
   ]));
 

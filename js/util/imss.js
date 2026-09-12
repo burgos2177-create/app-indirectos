@@ -248,7 +248,9 @@ export function calcularCuotasEmpleado({
  */
 export function sbcDe(empleado, params, { sdi, factorIntegracion }) {
   const bruto = Number(sdi) || 0;
-  const topado = Math.min(bruto, params.topeSBC);
+  // A dos decimales, como lo registra el IMSS: la emisión real usa el SBC ya
+  // redondeado y calcular con más decimales desviaba centavos en GMP e IV.
+  const topado = round2(Math.min(bruto, params.topeSBC));
   return {
     sbc: topado,
     sdi: bruto,

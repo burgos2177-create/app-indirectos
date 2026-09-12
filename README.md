@@ -123,6 +123,25 @@ nómina carga el NETO a la obra (`monto.importe = totalNeto`), la cuota obrera
 retenida no queda contabilizada en ningún otro lado y `neto + SIPARE` deja el costo
 de obra exacto. Se controla con `BASE_PRORRATEO` en `js/views/cargasocial.js`.
 
+### Importar la emisión del IMSS (lo exacto)
+El cálculo anterior sirve para **estimar sin depender del despacho**. Para el monto
+que realmente se paga, el módulo lee el **"Desglose de trabajadores"** que manda la
+contadora — el mismo archivo que genera la línea de captura SIPARE
+(`js/util/sipare.js`). Trae tres hojas: `Emisión`, `Movimientos EMA` (mensual) y
+`Movimientos EBA` (bimestral), con un renglón por trabajador **y por movimiento**
+(alta, modificación de salario…), que se suman por NSS.
+
+- SheetJS se carga bajo demanda desde CDN; no pesa en el arranque.
+- Los trabajadores se emparejan con el catálogo **por NSS** y, si no, por nombre
+  normalizado. Sin emparejar no se puede enviar: no habría clasificación contable
+  ni obra a la cual prorratear, y la app lista los NSS que faltan.
+- Al importar, el módulo muestra una **conciliación estimado vs emisión** por ramo
+  y manda al buzón las cifras exactas, con `fuente:"emision_imss"`,
+  `propuestaIMSS`, `propuestaRCV` y `registroPatronal`.
+- El archivo también valida el cálculo: contra la emisión de agosto 2026 la
+  calculadora reproduce **todos los ramos al centavo** (por eso el SBC se redondea
+  a dos decimales antes de aplicar tasas, como hace el SUA).
+
 ### Caja chica (fondo físico por obra)
 Fondo compartido por obra en rutas absolutas `/shared/cajaChica/{obraId}` (materiales
 e indirectos reportan al mismo fondo; distinguir con `origen:"indirectos"`). Reportar
